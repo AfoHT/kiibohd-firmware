@@ -1,6 +1,5 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "probe-run --chip ATSAM4S8B --speed 14000"
-#runner = "probe-run --chip ATSAM4S8B --speed 20000"
+runner = "probe-run"
 rustflags = [
    "-C", "linker=flip-link",
    "-C", "link-arg=-Tlink.x",
@@ -10,10 +9,6 @@ rustflags = [
    "-C", "link-arg=--nmagic",
 ]
 
-# Removing default compilation target as it messes with xtask and other system build tools
-#[build]
-#target = "thumbv7em-none-eabi"
-
 [alias]
 xtask = "run --package xtask --"
 
@@ -21,8 +16,7 @@ xtask = "run --package xtask --"
 CARGO_TARGET = "thumbv7em-none-eabi"
 OPENOCD_INTERFACE = "cmsis-dap"
 OPENOCD_TARGET = "at91sam4sXX"
-SWD_SPEED = "14000" # kHz
-#SWD_SPEED = "20000" # kHz
+PROBE_RUN_CHIP = "ATSAM4S8B"
 
 [unstable]
 features = ["host_dep"]
