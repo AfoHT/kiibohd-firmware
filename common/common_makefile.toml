@@ -1,11 +1,20 @@
 [tasks.bin]
 command = "cargo"
-args = ["objcopy", "--target", "${TARGET}", "--release", "--", "-O", "binary", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}.dfu.bin"]
+args = ["objcopy", "--target", "${TARGET}", "--", "-O", "binary", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin"]
 
 [tasks.bin-dfu]
 command = "dfu-suffix"
-args = ["--add", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}.dfu.bin", "--vid", "${BOOT_VID}", "--pid", "${BOOT_PID}"]
+args = ["--add", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin", "--vid", "${BOOT_VID}", "--pid", "${BOOT_PID}"]
 dependencies = ["bin"]
+
+[tasks.bin-release]
+command = "cargo"
+args = ["objcopy", "--target", "${TARGET}", "--release", "--", "-O", "binary", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin"]
+
+[tasks.bin-dfu-release]
+command = "dfu-suffix"
+args = ["--add", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin", "--vid", "${BOOT_VID}", "--pid", "${BOOT_PID}"]
+dependencies = ["bin-release"]
 
 [tasks.build]
 command = "cargo"
@@ -26,7 +35,12 @@ args = ["doc", "--target", "${TARGET}"]
 
 [tasks.flash]
 command = "dfu-util"
-args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}.dfu.bin"]
+args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin"]
+dependencies = ["bin-dfu"]
+
+[tasks.flash-release]
+command = "dfu-util"
+args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin"]
 dependencies = ["bin-dfu"]
 
 [tasks.fmt]
@@ -48,6 +62,15 @@ args = ["xtask", "gdb-client"]
 [tasks.run]
 command = "cargo"
 args = ["run", "--target", "${TARGET}"]
+
+[tasks.rerun]
+command = "cargo"
+args = ["run", "--target", "${TARGET}", "--", "--no-flash"]
+
+[tasks.fastrun]
+command = "cargo"
+args = ["run", "--target", "${TARGET}", "--", "--no-flash"]
+dependencies = ["flash"]
 
 [tasks.run-release]
 command = "cargo"

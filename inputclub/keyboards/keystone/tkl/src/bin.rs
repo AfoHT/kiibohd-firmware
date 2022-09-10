@@ -299,6 +299,7 @@ mod app {
         adc.offset(&mut pins.sense5, offset);
         adc.offset(&mut pins.sense6, offset);
 
+        adc.enable_tags();
         adc.autocalibration(true);
         adc.enable_rxbuff_interrupt(); // TODO Re-enable
         let adc = adc.with_continuous_pdc();
@@ -868,7 +869,7 @@ mod app {
         let matrix = cx.shared.matrix;
         // Determine if we should collect manufacturing data
         // There is too much data to send after every scan cycle (overwhelms HID-IO and USB)
-        let collect_manu_test = *cx.local.strobe_cycle % 5 == 0;
+        let collect_manu_test = *cx.local.strobe_cycle % 25 == 0;
 
         (adc, hidio_intf, layer_state, matrix).lock(|adc_pdc, hidio_intf, layer_state, matrix| {
             // Retrieve DMA buffer
@@ -887,23 +888,41 @@ mod app {
 
             // Process retrieved ADC buffer
             // Loop through buffer. The buffer may have multiple buffers for each key.
-            // For example, 12 entries + 6 rows, column 1:
-            //  Col Row Sample: Entry
-            //    1   0      0  6 * 1 + 0 = 6
-            //    1   1      1  6 * 1 + 1 = 7
-            //    1   2      2  6 * 1 + 2 = 8
-            //    1   3      3  6 * 1 + 3 = 9
-            //    1   4      4  6 * 1 + 4 = 10
-            //    1   5      5  6 * 1 + 5 = 11
-            //    1   0      6  6 * 1 + 0 = 6
-            //    1   1      7  6 * 1 + 1 = 7
-            //    1   2      8  6 * 1 + 2 = 8
-            //    1   3      9  6 * 1 + 3 = 9
-            //    1   4     10  6 * 1 + 4 = 10
-            //    1   5     11  6 * 1 + 5 = 11
+            // For example, 13 entries + 6 rows, column 1:
+            //  Col Row Channel Sample: Entry
+            //    1   5       9      0  N/A (ignored, previous column reading)
+            //    1   0       0      1  6 * 1 + 1 = 7
+            //    1   1       1      2  6 * 1 + 2 = 8
+            //    1   2       2      3  6 * 1 + 3 = 9
+            //    1   3       3      4  6 * 1 + 4 = 10
+            //    1   4       8      5  6 * 1 + 5 = 11
+            //    1   5       9      6  6 * 1 + 0 = 6
+            //    1   0       0      7  6 * 1 + 1 = 7
+            //    1   1       1      8  6 * 1 + 2 = 8
+            //    1   2       2      9  6 * 1 + 3 = 9
+            //    1   3       3     10  6 * 1 + 4 = 10
+            //    1   4       8     11  6 * 1 + 5 = 11
+            //    1   5       9     12  6 * 1 + 5 = 11
             for (i, sample) in buf.iter().enumerate() {
-                let index = RSIZE * strobe + i - (i / RSIZE) * RSIZE;
-                match matrix.record::<ADC_SAMPLES>(index, *sample) {
+                // Ignore the first sample in the column (as it's data from the previous column)
+                if i == 0 {
+                    continue;
+                }
+
+                // Handle multiple samples from the same buffer
+                let channel = (sample & 0xF000) >> 12;
+                let sample = sample & 0x0FFF;
+
+                // Remap channels to rows
+                let row = match channel {
+                    0..=3 => channel,
+                    8 => 4,
+                    9 => 5,
+                    _ => continue,
+                } as usize;
+
+                let index = row * CSIZE + strobe;
+                match matrix.record::<ADC_SAMPLES>(index, sample) {
                     Ok(val) => {
                         // If data bucket has accumulated enough samples, pass to the next stage
                         if let Some(sense) = val {

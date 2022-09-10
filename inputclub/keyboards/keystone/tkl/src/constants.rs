@@ -41,7 +41,8 @@ pub const CSIZE: usize = 18; // Number of columns
 pub const RSIZE: usize = 6; // Number of rows
 pub const MSIZE: usize = RSIZE * CSIZE; // Total matrix size
 pub const ADC_SAMPLES: usize = 2; // Number of samples per key per strobe
-pub const ADC_BUF_SIZE: usize = ADC_SAMPLES * RSIZE; // Size of ADC buffer per strobe
+pub const ADC_BUF_SIZE: usize = ADC_SAMPLES * RSIZE + 1; // Size of ADC buffer per strobe (plus 1
+                                                         // for the previous strobe's last sample)
 pub const INVERT_STROBE: bool = true; // P-Mosfets need to be inverted
 pub const ISSI_DRIVER_CHIPS: usize = 2;
 pub const ISSI_DRIVER_QUEUE_SIZE: usize = 5;
