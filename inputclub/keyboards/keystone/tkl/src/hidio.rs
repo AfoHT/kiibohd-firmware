@@ -98,57 +98,55 @@ impl<const H: usize> KiibohdCommandInterface<H> for HidioInterface<H> {
         // Make sure these are valid command/arguments for this keyboard
         let ret = match data.command {
             // LED test sequences
-            0x0001 => {
-                match data.argument {
+            h0050::Command::LedTestSequence => {
+                match unsafe { data.argument.led_test_sequence } {
                     // Disable all
-                    0x0000 => {
+                    h0050::args::LedTestSequence::Disable => {
                         self.manufacturing_config.led_test_sequence = false;
                         self.manufacturing_config.led_short_test = false;
                         self.manufacturing_config.led_open_test = false;
                         Ok(h0050::Ack {})
                     }
                     // Toggle LED test sequence
-                    0x0001 => {
+                    h0050::args::LedTestSequence::Enable => {
                         self.manufacturing_config.led_test_sequence = true;
                         Ok(h0050::Ack {})
                     }
                     // Enable LED short test (auto disable after completion)
                     // Sends data using h0051
-                    0x0002 => {
+                    h0050::args::LedTestSequence::ActivateLedShortTest => {
                         self.manufacturing_config.led_short_test = true;
                         Ok(h0050::Ack {})
                     }
                     // Enable LED open test (auto disable after completion)
                     // Sends data using h0051
-                    0x0003 => {
+                    h0050::args::LedTestSequence::ActivateLedOpenCircuitTest => {
                         self.manufacturing_config.led_open_test = true;
                         Ok(h0050::Ack {})
                     }
-                    _ => Err(h0050::Nak {}),
                 }
             }
             // Hall Effect tests
-            0x0003 => {
-                match data.argument {
+            h0050::Command::HallEffectSensorTest => {
+                match unsafe { data.argument.hall_effect_sensor_test } {
                     // Disables
-                    0x0000 => {
+                    h0050::args::HallEffectSensorTest::DisableAll => {
                         self.manufacturing_config.hall_pass_fail_test = false;
                         self.manufacturing_config.hall_level_check = false;
                         Ok(h0050::Ack {})
                     }
                     // Enables pass/fail test
                     // Sends data using h0051
-                    0x0001 => {
+                    h0050::args::HallEffectSensorTest::PassFailTestToggle => {
                         self.manufacturing_config.hall_pass_fail_test = true;
                         Ok(h0050::Ack {})
                     }
                     // Enables level check mode
                     // Sends data using h0051
-                    0x0002 => {
+                    h0050::args::HallEffectSensorTest::LevelCheckToggle => {
                         self.manufacturing_config.hall_level_check = true;
                         Ok(h0050::Ack {})
                     }
-                    _ => Err(h0050::Nak {}),
                 }
             }
             _ => Err(h0050::Nak {}),

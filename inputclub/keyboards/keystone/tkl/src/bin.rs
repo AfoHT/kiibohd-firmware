@@ -52,7 +52,8 @@ mod app {
                 UdpBus,
             },
             watchdog::Watchdog,
-            OutputPin, ToggleableOutputPin,
+            OutputPin,
+            //ToggleableOutputPin,
         },
         kll, Pins,
     };
@@ -682,8 +683,10 @@ mod app {
                         data.extend_from_slice(&short_results[1]).unwrap(); // Data
                         hidio_intf
                             .h0051_manufacturingres(h0051::Cmd {
-                                command: 0x0001,
-                                argument: 0x0002,
+                                command: h0051::Command::LedTestSequence,
+                                argument: h0051::Argument {
+                                    led_test_sequence: h0051::args::LedTestSequence::LedShortTest,
+                                },
                                 data,
                             })
                             .unwrap();
@@ -714,8 +717,11 @@ mod app {
                         data.extend_from_slice(&open_results[1]).unwrap(); // Data
                         hidio_intf
                             .h0051_manufacturingres(h0051::Cmd {
-                                command: 0x0001,
-                                argument: 0x0003,
+                                command: h0051::Command::LedTestSequence,
+                                argument: h0051::Argument {
+                                    led_test_sequence:
+                                        h0051::args::LedTestSequence::LedOpenCircuitTest,
+                                },
                                 data,
                             })
                             .unwrap();
@@ -950,17 +956,19 @@ mod app {
                 if collect_manu_test && manu_test_data.len() + 2 + RSIZE > manu_test_data.capacity()
                 {
                     // If manufacturing test is enabled, send accumulated data
-                    if hidio_intf.interface().manufacturing_config.hall_level_check {
-                        if hidio_intf
+                    if hidio_intf.interface().manufacturing_config.hall_level_check
+                        && hidio_intf
                             .h0051_manufacturingres(h0051::Cmd {
-                                command: 0x0003,
-                                argument: 0x0002,
+                                command: h0051::Command::HallEffectSensorTest,
+                                argument: h0051::Argument {
+                                    hall_effect_sensor_test:
+                                        h0051::args::HallEffectSensorTest::LevelCheck,
+                                },
                                 data: manu_test_data.clone(),
                             })
                             .is_err()
-                        {
-                            defmt::warn!("Buffer full, failed to send hall level check data");
-                        }
+                    {
+                        defmt::warn!("Buffer full, failed to send hall level check data");
                     }
 
                     // Clear manufacturing test data
