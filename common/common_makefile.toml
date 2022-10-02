@@ -41,7 +41,7 @@ dependencies = ["bin-dfu"]
 [tasks.flash-release]
 command = "dfu-util"
 args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin"]
-dependencies = ["bin-dfu"]
+dependencies = ["bin-dfu-release"]
 
 [tasks.fmt]
 command = "cargo"

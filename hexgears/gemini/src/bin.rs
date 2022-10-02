@@ -144,15 +144,6 @@ mod app {
             usb_bus: Option<UsbBusAllocator<UdpBus>> = None,
     ])]
     fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        // Fix vector table (Bootloader bug?)
-        //unsafe { cx.core.SCB.vtor.write(0x406000) };
-        //TODO - cortex-m-rt v0.8 set-vtor feature
-        // Fix stack pointer (Bootloader bug?)
-        //TODO - This is not safe, should be done another way (maybe not necessary?)
-        //TODO - cortex-m-rt v0.8 set-sp feature
-        //let sp = 0x20020000;
-        //unsafe { asm!("msr MSP, {}", in(reg) sp) };
-
         defmt::info!(">>>> Initializing <<<<");
 
         // Show processor registers
