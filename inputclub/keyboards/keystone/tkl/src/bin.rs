@@ -356,7 +356,8 @@ mod app {
 
         // TODO Move scaling and pwm initialization to kll pixelmap setup
         for chip in issi.pwm_page_buf() {
-            chip.iter_mut().for_each(|e| *e = 255);
+            chip.iter_mut().for_each(|e| *e = 20);
+            //chip.iter_mut().for_each(|e| *e = 255);
         }
         for chip in issi.scaling_page_buf() {
             chip.iter_mut().for_each(|e| *e = 100);
@@ -377,8 +378,10 @@ mod app {
         defmt::trace!("HID-IO Interface initialization");
         let hidio_intf = HidioCommandInterface::new(
             &[
+                HidIoCommandId::DirectSet,
                 HidIoCommandId::GetInfo,
                 HidIoCommandId::ManufacturingTest,
+                HidIoCommandId::PixelSetting,
                 HidIoCommandId::SupportedIds,
                 HidIoCommandId::TestPacket,
             ],
@@ -567,7 +570,7 @@ mod app {
             (cx.shared.hidio_intf, cx.shared.led_test).lock(|hidio_intf, led_test| {
                 // Look for manufacturing test commands
                 // Only check for new tests if one is not currently running
-                match *led_test {
+                let regular_processing = match *led_test {
                     LedTest::Disabled => {
                         if hidio_intf.interface().manufacturing_config.led_short_test {
                             // Enqueue short test
@@ -580,6 +583,7 @@ mod app {
                                 .mut_interface()
                                 .manufacturing_config
                                 .led_short_test = false;
+                            false
                         } else if hidio_intf.interface().manufacturing_config.led_open_test {
                             // Enqueue open test
                             issi.open_circuit_detect_setup().unwrap();
@@ -591,6 +595,9 @@ mod app {
                                 .mut_interface()
                                 .manufacturing_config
                                 .led_open_test = false;
+                            false
+                        } else {
+                            true
                         }
                     }
                     LedTest::Reset => {
@@ -599,11 +606,40 @@ mod app {
                         // in memory on the MCU so it will be the previous state.
                         issi.reset().unwrap();
                         *led_test = LedTest::Disabled;
+                        false
                     }
-                    _ => {}
-                }
+                    _ => false,
+                };
 
                 // Process incoming Pixel/LED Buffers
+                if regular_processing {
+                    let control = hidio_intf.interface().led_control.control;
+
+                    // Determine if HID-IO processing is enabled
+                    if control != h0021::args::Control::Disable {
+                        // Check for a reset, otherwise process frame
+                        if hidio_intf.interface().led_control.hard_reset || hidio_intf.interface().led_control.soft_reset {
+                            hidio_intf.mut_interface().led_control.soft_reset = false;
+                            hidio_intf.mut_interface().led_control.hard_reset = false;
+                            issi.reset().unwrap(); // Queue reset DMA transaction
+                            issi.scaling().unwrap(); // Queue scaling default
+                            issi.pwm().unwrap(); // Queue pwm default
+                        } else if (control == h0021::args::Control::EnablePause
+                            && hidio_intf.interface().led_control.next_frame)
+                            || control == h0021::args::Control::EnableStart
+                        {
+                            // Process frame
+                            hidio_intf.mut_interface().led_control.next_frame = false;
+
+                            // Copy data to frame buffer
+                            for (i, chip) in issi.pwm_page_buf().iter_mut().enumerate() {
+                                let start = i * ISSI_DRIVER_CHANNELS;
+                                let end = (i + 1) * ISSI_DRIVER_CHANNELS;
+                                chip.copy_from_slice(&hidio_intf.interface().led_buffer[start..end]);
+                            }
+                        }
+                    }
+                }
             });
 
             // Enable SPI DMA to update frame
@@ -629,7 +665,6 @@ mod app {
         // If this takes too long, the next frame update won't be scheduled (i.e. it'll be
         // skipped).
         // TODO - KLL Pixelmap
-        // TODO - HIDIO frame updates
     }
 
     /// LED Test Results
