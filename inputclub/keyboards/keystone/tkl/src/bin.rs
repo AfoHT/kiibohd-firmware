@@ -466,7 +466,7 @@ mod app {
         defmt::trace!("DwtSystick (Monotonic) started");
 
         // Manufacturing test data buffer
-        let mut manu_test_data = heapless::Vec::new();
+        let manu_test_data = heapless::Vec::new();
 
         (
             Shared {
@@ -618,7 +618,9 @@ mod app {
                     // Determine if HID-IO processing is enabled
                     if control != h0021::args::Control::Disable {
                         // Check for a reset, otherwise process frame
-                        if hidio_intf.interface().led_control.hard_reset || hidio_intf.interface().led_control.soft_reset {
+                        if hidio_intf.interface().led_control.hard_reset
+                            || hidio_intf.interface().led_control.soft_reset
+                        {
                             hidio_intf.mut_interface().led_control.soft_reset = false;
                             hidio_intf.mut_interface().led_control.hard_reset = false;
                             issi.reset().unwrap(); // Queue reset DMA transaction
@@ -635,7 +637,9 @@ mod app {
                             for (i, chip) in issi.pwm_page_buf().iter_mut().enumerate() {
                                 let start = i * ISSI_DRIVER_CHANNELS;
                                 let end = (i + 1) * ISSI_DRIVER_CHANNELS;
-                                chip.copy_from_slice(&hidio_intf.interface().led_buffer[start..end]);
+                                chip.copy_from_slice(
+                                    &hidio_intf.interface().led_buffer[start..end],
+                                );
                             }
                         }
                     }
@@ -684,7 +688,7 @@ mod app {
             cx.shared.led_test,
             cx.shared.usb_hid,
         )
-            .lock(|hidio_intf, issi, led_test, usb_hid| {
+            .lock(|hidio_intf, issi, led_test, _usb_hid| {
                 match *led_test {
                     LedTest::ShortQuery => {
                         // Schedule read of the short test results
@@ -887,7 +891,7 @@ mod app {
         matrix,
         usb_hid,
     ])]
-    fn adc(mut cx: adc::Context) {
+    fn adc(cx: adc::Context) {
         let adc = cx.shared.adc;
         let hidio_intf = cx.shared.hidio_intf;
         let layer_state = cx.shared.layer_state;
@@ -962,7 +966,7 @@ mod app {
                             for event in
                                 sense.trigger_event(SWITCH_REMAP[index as usize] as usize, false)
                             {
-                                let hidio_event = HidIoEvent::TriggerEvent(event);
+                                let _hidio_event = HidIoEvent::TriggerEvent(event);
 
                                 // Enqueue KLL trigger event
                                 let ret =

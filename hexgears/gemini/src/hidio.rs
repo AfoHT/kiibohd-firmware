@@ -8,7 +8,7 @@
 use super::constants::*;
 use core::fmt::Write;
 use gemini::hal::chipid::ChipId;
-use heapless::String;
+use heapless::{String, Vec};
 use kiibohd_hid_io::*;
 
 #[derive(defmt::Format)]
@@ -23,10 +23,24 @@ pub struct ManufacturingConfig {
     pub shake_test_led_cycle: bool,
 }
 
+#[derive(defmt::Format)]
+pub struct LedControl {
+    /// Control mode of the LED driver
+    pub control: h0021::args::Control,
+    /// Whether to trigger a soft reset of the LED driver on the next update
+    pub soft_reset: bool,
+    /// Whether to trigger a hard reset of the LED driver on the next update
+    pub hard_reset: bool,
+    /// Iterate to the next frame when using EnablePause mode (ignored otherwise)
+    pub next_frame: bool,
+}
+
 pub struct HidioInterface<const H: usize> {
+    pub led_buffer: Vec<u8, { ISSI_DRIVER_CHIPS * ISSI_DRIVER_CHANNELS }>,
+    pub led_control: LedControl,
+    pub manufacturing_config: ManufacturingConfig,
     mcu: Option<String<12>>,
     serial: Option<String<126>>,
-    pub manufacturing_config: ManufacturingConfig,
 }
 
 impl<const H: usize> HidioInterface<H> {
@@ -50,10 +64,25 @@ impl<const H: usize> HidioInterface<H> {
             shake_test_led_cycle: false,
         };
 
+        // Default to all controls disabled
+        let led_control = LedControl {
+            control: h0021::args::Control::Disable,
+            soft_reset: false,
+            hard_reset: false,
+            next_frame: false,
+        };
+
+        let mut led_buffer = Vec::new();
+        led_buffer
+            .resize_default(ISSI_DRIVER_CHIPS * ISSI_DRIVER_CHANNELS)
+            .unwrap();
+
         Self {
+            led_buffer,
+            led_control,
+            manufacturing_config,
             mcu,
             serial,
-            manufacturing_config,
         }
     }
 }
@@ -91,53 +120,108 @@ impl<const H: usize> KiibohdCommandInterface<H> for HidioInterface<H> {
         Some(VERGEN_GIT_SEMVER)
     }
 
+    fn h0021_pixelsetting_cmd(&mut self, data: h0021::Cmd) -> Result<h0021::Ack, h0021::Nak> {
+        defmt::info!("h0021_pixelsetting_cmd: {:?}", data);
+        match data.command {
+            h0021::Command::Control => {
+                self.led_control.control = unsafe { data.argument.control };
+            }
+            h0021::Command::Reset => match unsafe { data.argument.reset } {
+                h0021::args::Reset::SoftReset => {
+                    self.led_control.soft_reset = true;
+                }
+                h0021::args::Reset::HardReset => {
+                    self.led_control.hard_reset = true;
+                }
+            },
+            h0021::Command::Clear => match unsafe { data.argument.clear } {
+                h0021::args::Clear::Clear => {
+                    self.led_buffer.clear();
+                    self.led_buffer
+                        .resize_default(ISSI_DRIVER_CHIPS * ISSI_DRIVER_CHANNELS)
+                        .unwrap();
+                }
+            },
+            h0021::Command::Frame => match unsafe { data.argument.frame } {
+                h0021::args::Frame::NextFrame => {
+                    self.led_control.next_frame = true;
+                }
+            },
+            _ => {
+                return Err(h0021::Nak {});
+            }
+        }
+        Ok(h0021::Ack {})
+    }
+
+    fn h0026_directset_cmd(
+        &mut self,
+        data: h0026::Cmd<{ MESSAGE_LEN - 2 }>,
+    ) -> Result<h0026::Ack, h0026::Nak> {
+        defmt::info!("h0026_directset_cmd: {:?}", data);
+        // Make sure hid-io control is enabled
+        if self.led_control.control == h0021::args::Control::Disable {
+            defmt::warn!("h0026_directset_cmd: hid-io control is disabled");
+            return Err(h0026::Nak {});
+        }
+
+        // Make sure the buffer is large enough
+        if self.led_buffer.len() < data.data.len() {
+            defmt::warn!("h0026_directset_cmd: buffer too small");
+            return Err(h0026::Nak {});
+        }
+
+        // Copy the data into the buffer from the starting address
+        self.led_buffer[data.start_address as usize..data.data.len()].copy_from_slice(&data.data);
+
+        Ok(h0026::Ack {})
+    }
+
     fn h0050_manufacturing_cmd(&mut self, data: h0050::Cmd) -> Result<h0050::Ack, h0050::Nak> {
         // Make sure these are valid command/arguments for this keyboard
         let ret = match data.command {
             // LED test sequences
-            0x0001 => {
-                match data.argument {
+            h0050::Command::LedTestSequence => {
+                match unsafe { data.argument.led_test_sequence } {
                     // Disable all
-                    0x0000 => {
+                    h0050::args::LedTestSequence::Disable => {
                         self.manufacturing_config.led_test_sequence = false;
                         self.manufacturing_config.led_short_test = false;
                         self.manufacturing_config.led_open_test = false;
                         Ok(h0050::Ack {})
                     }
                     // Toggle LED test sequence
-                    0x0001 => {
+                    h0050::args::LedTestSequence::Enable => {
                         self.manufacturing_config.led_test_sequence = true;
                         Ok(h0050::Ack {})
                     }
                     // Enable LED short test (auto disable after completion)
                     // Sends data using h0051
-                    0x0002 => {
+                    h0050::args::LedTestSequence::ActivateLedShortTest => {
                         self.manufacturing_config.led_short_test = true;
                         Ok(h0050::Ack {})
                     }
                     // Enable LED open test (auto disable after completion)
                     // Sends data using h0051
-                    0x0003 => {
+                    h0050::args::LedTestSequence::ActivateLedOpenCircuitTest => {
                         self.manufacturing_config.led_open_test = true;
                         Ok(h0050::Ack {})
                     }
-                    _ => Err(h0050::Nak {}),
                 }
             }
             // Shake test
-            0x0002 => {
-                match data.argument {
+            h0050::Command::LedCycleKeypressTest => {
+                match unsafe { data.argument.led_cycle_keypress_test } {
                     // Disables
-                    0x0000 => {
+                    h0050::args::LedCycleKeypressTest::Disable => {
                         self.manufacturing_config.shake_test_led_cycle = false;
                         Ok(h0050::Ack {})
                     }
                     // Enables shake test
-                    0x0001 => {
+                    h0050::args::LedCycleKeypressTest::Enable => {
                         self.manufacturing_config.shake_test_led_cycle = true;
                         Ok(h0050::Ack {})
                     }
-                    _ => Err(h0050::Nak {}),
                 }
             }
             _ => Err(h0050::Nak {}),

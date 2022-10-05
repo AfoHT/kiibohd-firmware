@@ -33,7 +33,7 @@ mod app {
     use gemini::{
         hal::{
             chipid::ChipId,
-            clock::{ClockController, MainClock, SlowClock},
+            clock::{ClockController, Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock, Tc2Clock},
             efc::Efc,
             gpio::*,
             pac::TC0,
@@ -54,6 +54,22 @@ mod app {
     };
 
     // ----- Types -----
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+    pub enum LedTest {
+        /// No active test
+        Disabled,
+        /// Reset led controller (after reading test data, before setting disabled).
+        Reset,
+        /// Active test, need to query results from controller (next state is OpenReady)
+        OpenQuery,
+        /// Test finished, can read results directly (next state is Reset)
+        OpenReady,
+        /// Active test, need to query results from controller (next state is ShortReady)
+        ShortQuery,
+        /// Test finished, can read results directly (next state is Reset)
+        ShortReady,
+    }
 
     type HidInterface = kiibohd_usb::HidInterface<
         'static,
@@ -126,8 +142,8 @@ mod app {
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: RealTimeTimer,
-        tcc0: TimerCounterChannel<TC0, 0, TCC0_FREQ>,
-        tcc1: TimerCounterChannel<TC0, 1, TCC1_FREQ>,
+        tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
+        tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
         wdt: Watchdog,
     }
 
@@ -246,8 +262,10 @@ mod app {
         defmt::trace!("HID-IO Interface initialization");
         let hidio_intf = HidioCommandInterface::new(
             &[
+                HidIoCommandId::DirectSet,
                 HidIoCommandId::GetInfo,
                 HidIoCommandId::ManufacturingTest,
+                HidIoCommandId::PixelSetting,
                 HidIoCommandId::SupportedIds,
                 HidIoCommandId::TestPacket,
             ],
@@ -292,11 +310,20 @@ mod app {
         usb_dev.force_reset().unwrap();
 
         // Setup main timer
-        let tc0 = TimerCounter::new(
-            cx.device.TC0,
+        let tc0 = TimerCounter::new(cx.device.TC0);
+        let tc0_chs: TimerCounterChannels<
+            TC0,
+            Tc0Clock<Enabled>,
+            Tc1Clock<Enabled>,
+            Tc2Clock<Enabled>,
+            TCC0_FREQ,
+            TCC1_FREQ,
+            TCC2_FREQ,
+        > = tc0.split(
             clocks.peripheral_clocks.tc_0.into_enabled_clock(),
+            clocks.peripheral_clocks.tc_1.into_enabled_clock(),
+            clocks.peripheral_clocks.tc_2.into_enabled_clock(),
         );
-        let tc0_chs: TimerCounterChannels<TC0, TCC0_FREQ, TCC1_FREQ, TCC2_FREQ> = tc0.split();
 
         // Keyscanning Timer
         let mut tcc0 = tc0_chs.ch0;
@@ -322,6 +349,7 @@ mod app {
         let mono = DwtSystick::new(&mut cx.core.DCB, cx.core.DWT, cx.core.SYST, MCU_FREQ);
         defmt::trace!("DwtSystick (Monotonic) started");
 
+        // Manufacturing test data buffer
         (
             Shared {
                 hidio_intf,
@@ -350,12 +378,8 @@ mod app {
     ///   High-priority scheduled tasks as consistency is more important than speed for scanning
     ///   key states
     ///   Scans one strobe at a time
-    /// - LED frame scheduling (Uses tcc1)
-    ///   Schedules a lower priority task which is skipped if the previous frame is still
-    ///   processing
     #[task(priority = 13, binds = TC0, local = [
         tcc0,
-        tcc1,
     ], shared = [
         hidio_intf,
         layer_state,
@@ -401,7 +425,16 @@ mod app {
                 }
             }
         });
+    }
 
+    /// Timer task (TC1)
+    /// - LED frame scheduling (Uses tcc1)
+    ///   Schedules a lower priority task which is skipped if the previous frame is still
+    ///   processing
+    #[task(priority = 13, binds = TC1, local = [
+        tcc1,
+    ], shared = [])]
+    fn tc1(cx: tc1::Context) {
         // Check for LED frame scheduling interrupt
         if cx.local.tcc1.clear_interrupt_flags() {
             // Attempt to schedule LED frame
@@ -594,8 +627,10 @@ mod app {
                 usb_hid.pull();
 
                 // Process HID-IO
-                usb_hid.poll(hidio_intf);
+                usb_hid.pull_hidio(hidio_intf);
             }
+            // Attempt to tx any HID-IO packets
+            usb_hid.push_hidio(hidio_intf);
         });
     }
 }

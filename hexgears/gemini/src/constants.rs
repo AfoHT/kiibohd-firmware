@@ -40,6 +40,8 @@ pub const TX_BUF: usize = 8;
 pub const CSIZE: usize = 17; // Number of columns
 pub const RSIZE: usize = 6; // Number of rows
 pub const MSIZE: usize = RSIZE * CSIZE; // Total matrix size
+pub const ISSI_DRIVER_CHANNELS: usize = 192;
+pub const ISSI_DRIVER_CHIPS: usize = 2;
 
 // Remap lookup
 // 0 mapped keys are ignored
