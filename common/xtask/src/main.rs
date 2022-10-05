@@ -245,8 +245,5 @@ fn sam4_bootloader(probe_run_chip: String) -> Result<(), anyhow::Error> {
     // Force nRST (RSTC_CR) - atsam4
     core.write_word_32(0x400E1400, 0xA500_0008)?;
 
-    // Disable halt on reset (DEMCR) and other reset debugging to allow software to reset correctly
-    core.write_word_32(0xE000EDFC, 0)?;
-
     Ok(())
 }

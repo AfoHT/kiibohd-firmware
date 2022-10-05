@@ -35,13 +35,15 @@ args = ["doc", "--target", "${TARGET}"]
 
 [tasks.flash]
 command = "dfu-util"
-args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin"]
+args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin", "--reset"]
 dependencies = ["bin-dfu"]
+ignore_errors = true
 
 [tasks.flash-release]
 command = "dfu-util"
-args = ["--alt", "0", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin"]
+args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin", "--reset"]
 dependencies = ["bin-dfu-release"]
+ignore_errors = true
 
 [tasks.fmt]
 command = "cargo"
@@ -59,6 +61,10 @@ args = ["xtask", "gdb-server"]
 command = "cargo"
 args = ["xtask", "gdb-client"]
 
+[tasks.bootloader]
+command = "cargo"
+args = ["xtask", "sam4-bootloader"]
+
 [tasks.run]
 command = "cargo"
 args = ["run", "--target", "${TARGET}"]
@@ -68,9 +74,9 @@ command = "cargo"
 args = ["run", "--target", "${TARGET}", "--", "--no-flash"]
 
 [tasks.fastrun]
-command = "cargo"
-args = ["run", "--target", "${TARGET}", "--", "--no-flash"]
-dependencies = ["flash"]
+run_task = [
+    { name = ["bootloader", "flash", "rerun"] },
+]
 
 [tasks.run-release]
 command = "cargo"
