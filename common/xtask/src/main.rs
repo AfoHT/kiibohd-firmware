@@ -6,10 +6,13 @@ use std::{
 
 use anyhow::anyhow;
 use duct::cmd;
+use probe_rs::MemoryInterface;
+use probe_rs_cli_util::common_options::ProbeOptions;
 
 const CARGO_TARGET: &str = "thumbv7em-none-eabi";
 const OPENOCD_INTERFACE: &str = "cmsis-dap";
 const OPENOCD_TARGET: &str = "at91sam4sXX";
+const PROBE_RUN_CHIP: &str = "ATSAM4S8B";
 const RTT_TCP_PORT: u16 = 8765;
 const SWD_SPEED: u32 = 2666;
 
@@ -41,6 +44,10 @@ fn main() -> Result<(), anyhow::Error> {
         Ok(val) => val,
         Err(_) => OPENOCD_TARGET.to_string(),
     };
+    let probe_run_chip = match env::var("PROBE_RUN_CHIP") {
+        Ok(val) => val,
+        Err(_) => PROBE_RUN_CHIP.to_string(),
+    };
     let rtt_tcp_port = match env::var("RTT_TCP_PORT") {
         Ok(val) => val.parse::<u16>().unwrap(),
         Err(_) => RTT_TCP_PORT,
@@ -67,6 +74,7 @@ fn main() -> Result<(), anyhow::Error> {
             swd_speed,
         )?,
         ["gdb-client"] => gdb_client(elf)?,
+        ["sam4-bootloader"] => sam4_bootloader(probe_run_chip)?,
         _ => println!(
             "Cargo workflows
 
@@ -82,8 +90,9 @@ Environment Variables (effective) (default):
     SWD_SPEED ({}) ({})
 
 COMMANDS:
-    gdb-server     spawns a GDB server; flashes and runs firmware; prints logs
-    gdb-client     starts a GDB client and connects to a running GDB server
+    gdb-server      spawns a GDB server; flashes and runs firmware; prints logs
+    gdb-client      starts a GDB client and connects to a running GDB server
+    sam4-bootloader triggers hard reset and disables halt on reset; useful for use with dfu bootloaders
 ",
             cargo_target,
             CARGO_TARGET,
@@ -209,5 +218,35 @@ fn gdb_server(
 fn gdb_client(elf: PathBuf) -> Result<(), anyhow::Error> {
     // Run gdb
     cmd!("arm-none-eabi-gdb", format!("{}", elf.display()),).run()?;
+    Ok(())
+}
+
+/// Force sam4 reset to bootloader even if halt on reset is enabled
+///
+/// This is a common scenario when a debug probe is attached and it prevents
+/// the normal use of internal bootloaders.
+fn sam4_bootloader(probe_run_chip: String) -> Result<(), anyhow::Error> {
+    let common = ProbeOptions {
+        allow_erase_all: false,
+        chip: Some(probe_run_chip),
+        chip_description_path: None,
+        connect_under_reset: false,
+        dry_run: false,
+        probe_selector: None,
+        protocol: None,
+        speed: None,
+    };
+    let mut session = common.simple_attach()?;
+    let mut core = session.core(0)?;
+
+    // Disable halt on reset (DEMCR) and other reset debugging
+    core.write_word_32(0xE000EDFC, 0)?;
+
+    // Force nRST (RSTC_CR) - atsam4
+    core.write_word_32(0x400E1400, 0xA500_0008)?;
+
+    // Disable halt on reset (DEMCR) and other reset debugging to allow software to reset correctly
+    core.write_word_32(0xE000EDFC, 0)?;
+
     Ok(())
 }
