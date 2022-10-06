@@ -641,6 +641,7 @@ mod app {
                                     &hidio_intf.interface().led_buffer[start..end],
                                 );
                             }
+                            issi.pwm().unwrap(); // Queue pwm default
                         }
                     }
                 }
