@@ -576,8 +576,9 @@ mod app {
                             // Enqueue short test
                             issi.short_circuit_detect_setup().unwrap();
                             *led_test = LedTest::ShortQuery;
+                            // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
+                            // that only 1ms is required, in practice 2ms seems more reliable.
                             led_test::spawn_after(2000_u32.micros()).unwrap();
-                            //led_test::spawn_after(800_u32.micros()).unwrap();
 
                             hidio_intf
                                 .mut_interface()
@@ -588,8 +589,9 @@ mod app {
                             // Enqueue open test
                             issi.open_circuit_detect_setup().unwrap();
                             *led_test = LedTest::OpenQuery;
+                            // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
+                            // that only 1ms is required, in practice 2ms seems more reliable.
                             led_test::spawn_after(2000_u32.micros()).unwrap();
-                            //led_test::spawn_after(800_u32.micros()).unwrap();
 
                             hidio_intf
                                 .mut_interface()
@@ -964,9 +966,7 @@ mod app {
                                     .unwrap();
                             }
 
-                            for event in
-                                sense.trigger_event(SWITCH_REMAP[index as usize] as usize, false)
-                            {
+                            for event in sense.trigger_event(SWITCH_REMAP[index] as usize, false) {
                                 let _hidio_event = HidIoEvent::TriggerEvent(event);
 
                                 // Enqueue KLL trigger event
