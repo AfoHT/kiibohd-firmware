@@ -7,12 +7,8 @@
 
 #![no_std]
 
-pub use atsam4_hal as hal;
-use defmt_rtt as _;
-use panic_probe as _;
+use kiibohd_atsam4s::hal::{define_pin_map, gpio::*, pac::MATRIX};
 use paste::paste;
-
-use atsam4_hal::{define_pin_map, gpio::*, pac::MATRIX};
 
 /// [AUTO GENERATED]
 pub mod kll {

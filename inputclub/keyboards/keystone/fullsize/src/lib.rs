@@ -1,4 +1,4 @@
-// Copyright 2021 Jacob Alexander
+// Copyright 2021-2022 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -49,6 +49,10 @@ define_pin_map! {
     pin strobe16 = a10<Output<PushPull>, into_push_pull_output>,
     pin strobe17 = a23<Output<PushPull>, into_push_pull_output>,
     pin strobe18 = a24<Output<PushPull>, into_push_pull_output>,
+    pin strobe19 = a25<Output<PushPull>, into_push_pull_output>,
+    pin strobe20 = a26<Output<PushPull>, into_push_pull_output>,
+    pin strobe21 = a27<Output<PushPull>, into_push_pull_output>,
+    pin strobe22 = a28<Output<PushPull>, into_push_pull_output>,
 
     // Cfg
     pin cfg1 = a29<Input<PullDown>, into_pull_down_input>,

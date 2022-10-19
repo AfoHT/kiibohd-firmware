@@ -9,123 +9,41 @@
 #![no_main]
 
 mod constants;
-mod hidio;
-
-use cortex_m_rt::exception;
 
 // ----- RTIC -----
 
 // RTIC requires that unused interrupts are declared in an extern block when
 // using software tasks; these free interrupts will be used to dispatch the
 // software tasks.
-#[rtic::app(device = keystonetkl::hal::pac, peripherals = true, dispatchers = [UART1, USART0, USART1, SSC, PWM, ACC, TWI0, TWI1])]
+#[rtic::app(device = kiibohd_atsam4s::hal::pac, peripherals = true, dispatchers = [UART1, USART0, USART1, SSC, PWM, ACC, TWI0, TWI1])]
 mod app {
     use crate::constants::*;
-    use crate::hidio::*;
-    use core::fmt::Write;
     use dwt_systick_monotonic::*;
-    use fugit::{HertzU32 as Hertz, RateExtU32};
-    use heapless::spsc::{Consumer, Producer, Queue};
-    use heapless::String;
-    use is31fl3743b::Is31fl3743bAtsam4Dma;
-    use kiibohd_hid_io::*;
-    use kiibohd_usb::HidCountryCode;
-
-    use keystonetkl::{
+    use keystonetkl::{kll, Pins};
+    use kiibohd_atsam4s::{
+        self,
+        constants::*,
         hal::{
-            adc::{Adc, AdcPayload, Continuous, SingleEndedGain},
-            chipid::ChipId,
-            clock::{ClockController, Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock, Tc2Clock},
-            efc::Efc,
-            gpio::*,
+            clock::{Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock},
             pac::TC0,
-            pdc::{ReadDma, ReadDmaPaused, ReadWriteDmaLen, RxDma, RxTxDma, Transfer, W},
+            pdc::ReadDma,
             prelude::*,
-            spi::{SpiMaster, SpiPayload, Variable},
-            timer::{TimerCounter, TimerCounterChannel, TimerCounterChannels},
-            udp::{
-                usb_device,
-                usb_device::{
-                    bus::UsbBusAllocator,
-                    device::{UsbDeviceBuilder, UsbDeviceState, UsbVidPid},
-                },
-                UdpBus,
-            },
+            timer::TimerCounterChannel,
+            udp::{usb_device::bus::UsbBusAllocator, UdpBus},
             watchdog::Watchdog,
-            OutputPin,
-            //ToggleableOutputPin,
         },
-        kll, Pins,
+        heapless::{
+            self,
+            spsc::{Consumer, Producer, Queue},
+            String,
+        },
+        kiibohd_hid_io, kiibohd_usb, LayerState,
     };
 
     // ----- Types -----
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
-    pub enum LedTest {
-        /// No active test
-        Disabled,
-        /// Reset led controller (after reading test data, before setting disabled).
-        Reset,
-        /// Active test, need to query results from controller (next state is OpenReady)
-        OpenQuery,
-        /// Test finished, can read results directly (next state is Reset)
-        OpenReady,
-        /// Active test, need to query results from controller (next state is ShortReady)
-        ShortQuery,
-        /// Test finished, can read results directly (next state is Reset)
-        ShortReady,
-    }
-
-    type AdcTransfer = Transfer<W, &'static mut [u16; ADC_BUF_SIZE], RxDma<AdcPayload<Continuous>>>;
-    type HidInterface = kiibohd_usb::HidInterface<
-        'static,
-        UdpBus,
-        KBD_QUEUE_SIZE,
-        KBD_LED_QUEUE_SIZE,
-        MOUSE_QUEUE_SIZE,
-        CTRL_QUEUE_SIZE,
-    >;
-    type HidioCommandInterface = CommandInterface<
-        HidioInterface<MESSAGE_LEN>,
-        TX_BUF,
-        RX_BUF,
-        BUF_CHUNK,
-        MESSAGE_LEN,
-        SERIALIZATION_LEN,
-        ID_LEN,
-    >;
-    type LayerLookup = kll_core::layout::LayerLookup<'static, LAYOUT_SIZE>;
-    type LayerState = kll_core::layout::LayerState<
-        'static,
-        LAYOUT_SIZE,
-        STATE_SIZE,
-        MAX_LAYERS,
-        MAX_ACTIVE_LAYERS,
-        MAX_ACTIVE_TRIGGERS,
-        MAX_LAYER_STACK_CACHE,
-        MAX_OFF_STATE_LOOKUP,
-    >;
-    type Matrix = kiibohd_hall_effect_keyscanning::Matrix<
-        PioX<Output<PushPull>>,
-        CSIZE,
-        MSIZE,
-        INVERT_STROBE,
-    >;
-    type RealTimeTimer = keystonetkl::hal::rtt::RealTimeTimer<RTT_PRESCALER, false>;
-    type SpiTransferRxTx = Transfer<
-        W,
-        (
-            &'static mut [u32; SPI_RX_BUF_SIZE],
-            &'static mut [u32; SPI_TX_BUF_SIZE],
-        ),
-        RxTxDma<SpiPayload<Variable, u32>>,
-    >;
-    type SpiParkedDma = (
-        SpiMaster<u32>,
-        &'static mut [u32; SPI_RX_BUF_SIZE],
-        &'static mut [u32; SPI_TX_BUF_SIZE],
-    );
-    type UsbDevice = usb_device::device::UsbDevice<'static, UdpBus>;
+    type LayerLookup = kiibohd_atsam4s::kll_core::layout::LayerLookup<'static, LAYOUT_SIZE>;
+    type Matrix = kiibohd_atsam4s::hall_effect::HallMatrix<CSIZE, MSIZE>;
 
     #[monotonic(binds = SysTick, default = true)]
     type DwtMono = DwtSystick<MCU_FREQ>;
@@ -137,16 +55,19 @@ mod app {
     //
     #[shared]
     struct Shared {
-        adc: Option<AdcTransfer>,
-        hidio_intf: HidioCommandInterface,
-        issi: Is31fl3743bAtsam4Dma<ISSI_DRIVER_CHIPS, ISSI_DRIVER_QUEUE_SIZE>,
+        adc: Option<kiibohd_atsam4s::hall_effect::AdcTransfer<ADC_BUF_SIZE>>,
+        hidio_intf: kiibohd_atsam4s::HidioCommandInterface,
+        issi: kiibohd_atsam4s::issi_spi::Is31fl3743bAtsam4Dma<
+            ISSI_DRIVER_CHIPS,
+            ISSI_DRIVER_QUEUE_SIZE,
+        >,
         layer_state: LayerState,
-        led_test: LedTest,
+        led_test: kiibohd_atsam4s::LedTest,
         matrix: Matrix,
-        spi: Option<SpiParkedDma>,
-        spi_rxtx: Option<SpiTransferRxTx>,
-        usb_dev: UsbDevice,
-        usb_hid: HidInterface,
+        spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
+        spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
+        usb_dev: kiibohd_atsam4s::UsbDevice,
+        usb_hid: kiibohd_atsam4s::HidInterface,
     }
 
     //
@@ -156,12 +77,11 @@ mod app {
     #[local]
     struct Local {
         ctrl_producer: Producer<'static, kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE>,
-        debug_led: Pa15<Output<PushPull>>,
         kbd_led_consumer: Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
         manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
-        rtt: RealTimeTimer,
+        rtt: kiibohd_atsam4s::RealTimeTimer,
         strobe_cycle: u32,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
         tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
@@ -184,116 +104,56 @@ mod app {
             usb_bus: Option<UsbBusAllocator<UdpBus>> = None,
     ])]
     fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        defmt::info!(">>>> Initializing <<<<");
-
-        // Show processor registers
-        defmt::trace!("MSP: {:#010x}", cortex_m::register::msp::read());
-        defmt::trace!("PSP: {:#010x}", cortex_m::register::psp::read());
-
-        // Determine which chip is running
-        let chip = ChipId::new(cx.device.CHIPID);
-        defmt::info!("MCU: {:?}", chip.model());
-
-        // Setup main and slow clocks
-        defmt::trace!("Clock initialization");
-        let clocks = ClockController::new(
+        let (wdt, mut clocks, chip, mut tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
+            cx.device.CHIPID,
+            cx.device.EFC0,
+            cx.device.PIOA,
+            cx.device.PIOB,
             cx.device.PMC,
+            cx.device.RTT,
             &cx.device.SUPC,
-            &cx.device.EFC0,
+            cx.device.TC0,
+            cx.device.WDT,
             MainClock::Crystal12Mhz,
             SlowClock::RcOscillator32Khz,
+            cx.local.serial_number,
         );
 
-        // Setup gpios
-        defmt::trace!("GPIO initialization");
-        let gpio_ports = Ports::new(
-            (
-                cx.device.PIOA,
-                clocks.peripheral_clocks.pio_a.into_enabled_clock(),
-            ),
-            (
-                cx.device.PIOB,
-                clocks.peripheral_clocks.pio_b.into_enabled_clock(),
-            ),
-        );
+        // Setup pins
         let mut pins = Pins::new(gpio_ports, &cx.device.MATRIX);
 
-        // Prepare watchdog to be fed
-        let mut wdt = Watchdog::new(cx.device.WDT);
-        wdt.feed();
-        defmt::trace!("Watchdog first feed");
-
-        // Setup flash controller (needed for unique id)
-        let efc = Efc::new(cx.device.EFC0, unsafe { &mut FLASH_CONFIG });
-        // Retrieve unique id and format it for the USB descriptor
-        let uid = efc.read_unique_id().unwrap();
-        write!(
-            cx.local.serial_number,
-            "{:x}{:x}{:x}{:x}",
-            uid[0], uid[1], uid[2], uid[3]
-        )
-        .unwrap();
-        defmt::info!("UID: {}", cx.local.serial_number);
-
         // Setup hall effect matrix
-        defmt::trace!("HE Matrix initialization");
-        let cols = [
-            pins.strobe1.downgrade(),
-            pins.strobe2.downgrade(),
-            pins.strobe3.downgrade(),
-            pins.strobe4.downgrade(),
-            pins.strobe5.downgrade(),
-            pins.strobe6.downgrade(),
-            pins.strobe7.downgrade(),
-            pins.strobe8.downgrade(),
-            pins.strobe9.downgrade(),
-            pins.strobe10.downgrade(),
-            pins.strobe11.downgrade(),
-            pins.strobe12.downgrade(),
-            pins.strobe13.downgrade(),
-            pins.strobe14.downgrade(),
-            pins.strobe15.downgrade(),
-            pins.strobe16.downgrade(),
-            pins.strobe17.downgrade(),
-            pins.strobe18.downgrade(),
-        ];
-        let mut matrix = Matrix::new(cols).unwrap();
-        matrix.next_strobe().unwrap(); // Strobe first column
-
-        // Setup ADC for hall effect matrix
-        defmt::trace!("ADC initialization");
-        let gain = SingleEndedGain::Gain4x;
-        let offset = true;
-        let mut adc = Adc::new(
+        let (adc, matrix) = kiibohd_atsam4s::hall_effect::init::<CSIZE, MSIZE>(
             cx.device.ADC,
             clocks.peripheral_clocks.adc.into_enabled_clock(),
+            [
+                pins.strobe1.downgrade(),
+                pins.strobe2.downgrade(),
+                pins.strobe3.downgrade(),
+                pins.strobe4.downgrade(),
+                pins.strobe5.downgrade(),
+                pins.strobe6.downgrade(),
+                pins.strobe7.downgrade(),
+                pins.strobe8.downgrade(),
+                pins.strobe9.downgrade(),
+                pins.strobe10.downgrade(),
+                pins.strobe11.downgrade(),
+                pins.strobe12.downgrade(),
+                pins.strobe13.downgrade(),
+                pins.strobe14.downgrade(),
+                pins.strobe15.downgrade(),
+                pins.strobe16.downgrade(),
+                pins.strobe17.downgrade(),
+                pins.strobe18.downgrade(),
+            ],
+            &mut pins.sense1,
+            &mut pins.sense2,
+            &mut pins.sense3,
+            &mut pins.sense4,
+            &mut pins.sense5,
+            &mut pins.sense6,
+            &mut tc0_chs,
         );
-
-        adc.enable_channel(&mut pins.sense1);
-        adc.enable_channel(&mut pins.sense2);
-        adc.enable_channel(&mut pins.sense3);
-        adc.enable_channel(&mut pins.sense4);
-        adc.enable_channel(&mut pins.sense5);
-        adc.enable_channel(&mut pins.sense6);
-
-        adc.gain(&mut pins.sense1, gain);
-        adc.gain(&mut pins.sense2, gain);
-        adc.gain(&mut pins.sense3, gain);
-        adc.gain(&mut pins.sense4, gain);
-        adc.gain(&mut pins.sense5, gain);
-        adc.gain(&mut pins.sense6, gain);
-
-        adc.offset(&mut pins.sense1, offset);
-        adc.offset(&mut pins.sense2, offset);
-        adc.offset(&mut pins.sense3, offset);
-        adc.offset(&mut pins.sense4, offset);
-        adc.offset(&mut pins.sense5, offset);
-        adc.offset(&mut pins.sense6, offset);
-
-        adc.enable_tags();
-        adc.autocalibration(true);
-        adc.enable_rxbuff_interrupt(); // TODO Re-enable
-        let adc = adc.with_continuous_pdc();
 
         // Setup kll-core
         let loop_condition_lookup: &[u32] = &[0]; // TODO: Use KLL Compiler
@@ -310,156 +170,47 @@ mod app {
         // Initialize LayerState for kll-core
         let layer_state = LayerState::new(layer_lookup, 0);
 
-        // Setup SPI for LED Drivers
-        defmt::trace!("SPI ISSI Driver initialization");
-        let wdrbt = false; // Wait data read before transfer enabled
-        let llb = false; // Local loopback
-                         // Cycles to delay between consecutive transfers
-        let dlybct = 0; // No delay
-        let mut spi = SpiMaster::<u32>::new(
+        // ISSI + SPI Driver setup
+        let issi_default_brightness = 255; // TODO compile-time configuration + flash default
+        let issi_default_enable = true; // TODO compile-time configuration + flash default
+        let (spi_rxtx, issi) = kiibohd_atsam4s::issi_spi::init(
+            &mut pins.debug_led,
+            issi_default_brightness,
+            issi_default_enable,
             cx.device.SPI,
             clocks.peripheral_clocks.spi.into_enabled_clock(),
             pins.spi_miso,
             pins.spi_mosi,
+            cx.local.spi_rx_buf,
             pins.spi_sck,
-            atsam4_hal::spi::PeripheralSelectMode::Variable,
-            wdrbt,
-            llb,
-            dlybct,
+            cx.local.spi_tx_buf,
+            &mut tc0_chs,
         );
 
-        // Setup each CS channel
-        let mode = atsam4_hal::spi::spi::MODE_3;
-        let csa = atsam4_hal::spi::ChipSelectActive::ActiveAfterTransfer;
-        let bits = atsam4_hal::spi::BitWidth::Width8Bit;
-        let baud: Hertz = 12_u32.MHz();
-        // Cycles to delay from CS to first valid SPCK
-        let dlybs = 0; // Half an SPCK clock period
-        let cs_settings =
-            atsam4_hal::spi::ChipSelectSettings::new(mode, csa, bits, baud, dlybs, dlybct);
-        for i in 0..ISSI_DRIVER_CHIPS {
-            spi.cs_setup(i as u8, cs_settings.clone()).unwrap();
-        }
-        spi.enable_txbufe_interrupt();
-
-        // Setup SPI with pdc
-        let spi = spi.with_pdc_rxtx();
-
-        // Setup ISSI LED Driver
-        let issi_default_brightness = 255; // TODO compile-time configuration + flash default
-        let issi_default_enable = true; // TODO compile-time configuration + flash default
-        let mut issi = Is31fl3743bAtsam4Dma::<ISSI_DRIVER_CHIPS, ISSI_DRIVER_QUEUE_SIZE>::new(
-            ISSI_DRIVER_CS_LAYOUT,
-            issi_default_brightness,
-            issi_default_enable,
-        );
-
-        // TODO Move scaling and pwm initialization to kll pixelmap setup
-        for chip in issi.pwm_page_buf() {
-            chip.iter_mut().for_each(|e| *e = 20);
-            //chip.iter_mut().for_each(|e| *e = 255);
-        }
-        for chip in issi.scaling_page_buf() {
-            chip.iter_mut().for_each(|e| *e = 100);
-        }
-        defmt::info!("pwm: {:?}", issi.pwm_page_buf());
-        defmt::info!("scaling: {:?}", issi.scaling_page_buf());
-        // Disable ISSI hardware shutdown
-        pins.debug_led.set_high().ok();
-
-        // Start ISSI LED Driver initialization
-        issi.reset().unwrap(); // Queue reset DMA transaction
-        issi.scaling().unwrap(); // Queue scaling default
-        issi.pwm().unwrap(); // Queue pwm default
-        let (rx_len, tx_len) = issi.tx_function(cx.local.spi_tx_buf).unwrap();
-        let spi_rxtx = spi.read_write_len(cx.local.spi_rx_buf, rx_len, cx.local.spi_tx_buf, tx_len);
-
-        // Setup HID-IO interface
-        defmt::trace!("HID-IO Interface initialization");
-        let hidio_intf = HidioCommandInterface::new(
-            &[
-                HidIoCommandId::DirectSet,
-                HidIoCommandId::GetInfo,
-                HidIoCommandId::ManufacturingTest,
-                HidIoCommandId::PixelSetting,
-                HidIoCommandId::SupportedIds,
-                HidIoCommandId::TestPacket,
-            ],
-            HidioInterface::<MESSAGE_LEN>::new(&chip, Some(cx.local.serial_number.clone())),
-        )
-        .unwrap();
-
-        // Setup USB
-        defmt::trace!("UDP initialization");
-        let (kbd_producer, kbd_consumer) = cx.local.kbd_queue.split();
-        let (kbd_led_producer, kbd_led_consumer) = cx.local.kbd_led_queue.split();
-        let (mouse_producer, mouse_consumer) = cx.local.mouse_queue.split();
-        let (ctrl_producer, ctrl_consumer) = cx.local.ctrl_queue.split();
-        let mut udp_bus = UdpBus::new(
+        // Setup USB + HID-IO interface
+        let (
+            usb_dev,
+            usb_hid,
+            hidio_intf,
+            ctrl_producer,
+            kbd_led_consumer,
+            kbd_producer,
+            mouse_producer,
+        ) = kiibohd_atsam4s::usb_init(
+            &chip,
+            cx.local.ctrl_queue,
+            cx.local.kbd_led_queue,
+            cx.local.kbd_queue,
+            VERGEN_GIT_COMMIT_COUNT.parse().unwrap(),
+            VERGEN_GIT_SEMVER,
+            cx.local.mouse_queue,
+            cx.local.serial_number,
             cx.device.UDP,
             clocks.peripheral_clocks.udp,
             pins.udp_ddm,
             pins.udp_ddp,
+            cx.local.usb_bus,
         );
-        udp_bus.remote_wakeup_enabled(true); // Enable hardware support for remote wakeup
-        *cx.local.usb_bus = Some(UsbBusAllocator::<UdpBus>::new(udp_bus));
-        let usb_bus = cx.local.usb_bus.as_ref().unwrap();
-        let usb_hid = HidInterface::new(
-            usb_bus,
-            HidCountryCode::NotSupported,
-            kbd_consumer,
-            kbd_led_producer,
-            mouse_consumer,
-            ctrl_consumer,
-        );
-        let mut usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(VID, PID))
-            .manufacturer(USB_MANUFACTURER)
-            .max_packet_size_0(64)
-            .max_power(500)
-            .product(USB_PRODUCT)
-            .supports_remote_wakeup(true)
-            .serial_number(cx.local.serial_number)
-            .device_release(VERGEN_GIT_COMMIT_COUNT.parse().unwrap())
-            .build();
-
-        // TODO This should only really be run when running with a debugger for development
-        usb_dev.force_reset().unwrap();
-
-        // Setup main timer
-        let tc0 = TimerCounter::new(cx.device.TC0);
-        let tc0_chs: TimerCounterChannels<
-            TC0,
-            Tc0Clock<Enabled>,
-            Tc1Clock<Enabled>,
-            Tc2Clock<Enabled>,
-            TCC0_FREQ,
-            TCC1_FREQ,
-            TCC2_FREQ,
-        > = tc0.split(
-            clocks.peripheral_clocks.tc_0.into_enabled_clock(),
-            clocks.peripheral_clocks.tc_1.into_enabled_clock(),
-            clocks.peripheral_clocks.tc_2.into_enabled_clock(),
-        );
-
-        // Keyscanning Timer
-        let mut tcc0 = tc0_chs.ch0;
-        tcc0.clock_input(TCC0_DIV);
-        tcc0.start(200_u32.micros());
-        defmt::trace!("TCC0 started - Keyscanning");
-        tcc0.enable_interrupt();
-
-        // LED Frame Timer
-        let mut tcc1 = tc0_chs.ch1;
-        tcc1.clock_input(TCC1_DIV);
-        tcc1.start(17_u32.millis()); // 17 ms -> ~60 fps (16.6667 ms)
-        defmt::trace!("TCC1 started - LED Frame Scheduling");
-        tcc1.enable_interrupt();
-
-        // Setup secondary timer (used for watchdog, activity led and sleep related functionality)
-        let mut rtt = RealTimeTimer::new(cx.device.RTT);
-        rtt.start(500_000u32.micros());
-        rtt.enable_alarm_interrupt();
-        defmt::trace!("RTT Timer started");
 
         // Initialize tickless monotonic timer
         let mono = DwtSystick::new(&mut cx.core.DCB, cx.core.DWT, cx.core.SYST, MCU_FREQ);
@@ -474,7 +225,7 @@ mod app {
                 hidio_intf,
                 issi,
                 layer_state,
-                led_test: LedTest::Disabled,
+                led_test: kiibohd_atsam4s::LedTest::Disabled,
                 matrix,
                 spi: None,
                 spi_rxtx: Some(spi_rxtx),
@@ -483,15 +234,14 @@ mod app {
             },
             Local {
                 ctrl_producer,
-                debug_led: pins.debug_led,
                 kbd_led_consumer,
                 kbd_producer,
                 manu_test_data,
                 mouse_producer,
                 rtt,
                 strobe_cycle: 0,
-                tcc0,
-                tcc1,
+                tcc0: tc0_chs.ch0,
+                tcc1: tc0_chs.ch1,
                 wdt,
             },
             init::Monotonics(mono),
@@ -540,7 +290,6 @@ mod app {
     /// Activity tick
     /// Used visually determine MCU status
     #[task(priority = 1, binds = RTT, local = [
-        debug_led,
         rtt,
         wdt,
     ], shared = [])]
@@ -549,10 +298,6 @@ mod app {
 
         // Feed watchdog
         cx.local.wdt.feed();
-
-        // Blink debug led
-        // TODO: Remove (or use feature flag)
-        //cx.local.debug_led.toggle().ok();
     }
 
     /// LED Frame Processing Task
@@ -565,113 +310,33 @@ mod app {
         spi,
         spi_rxtx,
     ])]
-    fn led_frame_process(mut cx: led_frame_process::Context) {
-        cx.shared.issi.lock(|issi| {
-            (cx.shared.hidio_intf, cx.shared.led_test).lock(|hidio_intf, led_test| {
+    fn led_frame_process(cx: led_frame_process::Context) {
+        (cx.shared.hidio_intf, cx.shared.issi, cx.shared.led_test).lock(
+            |hidio_intf, issi, led_test| {
                 // Look for manufacturing test commands
-                // Only check for new tests if one is not currently running
-                let regular_processing = match *led_test {
-                    LedTest::Disabled => {
-                        if hidio_intf.interface().manufacturing_config.led_short_test {
-                            // Enqueue short test
-                            issi.short_circuit_detect_setup().unwrap();
-                            *led_test = LedTest::ShortQuery;
-                            // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
-                            // that only 1ms is required, in practice 2ms seems more reliable.
-                            led_test::spawn_after(2000_u32.micros()).unwrap();
+                let (regular_processing, spawn_led_test) =
+                    kiibohd_atsam4s::issi_spi::led_frame_process_manufacturing_tests_task(
+                        hidio_intf, issi, led_test,
+                    );
 
-                            hidio_intf
-                                .mut_interface()
-                                .manufacturing_config
-                                .led_short_test = false;
-                            false
-                        } else if hidio_intf.interface().manufacturing_config.led_open_test {
-                            // Enqueue open test
-                            issi.open_circuit_detect_setup().unwrap();
-                            *led_test = LedTest::OpenQuery;
-                            // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
-                            // that only 1ms is required, in practice 2ms seems more reliable.
-                            led_test::spawn_after(2000_u32.micros()).unwrap();
-
-                            hidio_intf
-                                .mut_interface()
-                                .manufacturing_config
-                                .led_open_test = false;
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    LedTest::Reset => {
-                        // Reset LED state
-                        // The PWM and Scaling registers are reset, but we have a full copy
-                        // in memory on the MCU so it will be the previous state.
-                        issi.reset().unwrap();
-                        *led_test = LedTest::Disabled;
-                        false
-                    }
-                    _ => false,
-                };
-
-                // Process incoming Pixel/LED Buffers
-                if regular_processing {
-                    let control = hidio_intf.interface().led_control.control;
-
-                    // Determine if HID-IO processing is enabled
-                    if control != h0021::args::Control::Disable {
-                        // Check for a reset, otherwise process frame
-                        if hidio_intf.interface().led_control.hard_reset
-                            || hidio_intf.interface().led_control.soft_reset
-                        {
-                            hidio_intf.mut_interface().led_control.soft_reset = false;
-                            hidio_intf.mut_interface().led_control.hard_reset = false;
-                            issi.reset().unwrap(); // Queue reset DMA transaction
-                            issi.scaling().unwrap(); // Queue scaling default
-                            issi.pwm().unwrap(); // Queue pwm default
-                        } else if (control == h0021::args::Control::EnablePause
-                            && hidio_intf.interface().led_control.next_frame)
-                            || control == h0021::args::Control::EnableStart
-                        {
-                            // Process frame
-                            hidio_intf.mut_interface().led_control.next_frame = false;
-
-                            // Copy data to frame buffer
-                            for (i, chip) in issi.pwm_page_buf().iter_mut().enumerate() {
-                                let start = i * ISSI_DRIVER_CHANNELS;
-                                let end = (i + 1) * ISSI_DRIVER_CHANNELS;
-                                chip.copy_from_slice(
-                                    &hidio_intf.interface().led_buffer[start..end],
-                                );
-                            }
-                            issi.pwm().unwrap(); // Queue pwm default
-                        }
-                    }
+                // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
+                // that only 1ms is required, in practice 2ms seems more reliable.
+                if spawn_led_test {
+                    led_test::spawn_after(2000_u32.micros()).unwrap();
                 }
-            });
 
-            // Enable SPI DMA to update frame
-            (cx.shared.spi, cx.shared.spi_rxtx).lock(|spi_periph, spi_rxtx| {
-                // We only need to re-enable DMA if the queue was previously empty and "parked"
-                if let Some((mut spi, rx_buf, tx_buf)) = spi_periph.take() {
-                    spi.enable_txbufe_interrupt();
-                    let spi = spi.with_pdc_rxtx();
-                    // Look for issi event queue
-                    if let Ok((rx_len, tx_len)) = issi.tx_function(tx_buf) {
-                        spi_rxtx.replace(spi.read_write_len(rx_buf, rx_len, tx_buf, tx_len));
-                    } else {
-                        // Nothing to do (repark dma)
-                        let mut spi = spi.revert();
-                        spi.disable_txbufe_interrupt();
-                        spi_periph.replace((spi, rx_buf, tx_buf));
-                    }
-                }
-            });
-        });
-
-        // Handle processing of "next" frame
-        // If this takes too long, the next frame update won't be scheduled (i.e. it'll be
-        // skipped).
-        // TODO - KLL Pixelmap
+                // Enable SPI DMA to update frame
+                (cx.shared.spi, cx.shared.spi_rxtx).lock(|spi_periph, spi_rxtx| {
+                    kiibohd_atsam4s::issi_spi::led_frame_process_is31fl3743b_dma_task(
+                        hidio_intf,
+                        issi,
+                        spi_periph,
+                        spi_rxtx,
+                        regular_processing,
+                    );
+                });
+            },
+        );
     }
 
     /// LED Test Results
@@ -681,90 +346,18 @@ mod app {
         hidio_intf,
         issi,
         led_test,
-        usb_hid,
     ])]
     fn led_test(cx: led_test::Context) {
         // Check for test results
-        (
-            cx.shared.hidio_intf,
-            cx.shared.issi,
-            cx.shared.led_test,
-            cx.shared.usb_hid,
-        )
-            .lock(|hidio_intf, issi, led_test, _usb_hid| {
-                match *led_test {
-                    LedTest::ShortQuery => {
-                        // Schedule read of the short test results
-                        issi.short_circuit_detect_read().unwrap();
-                        *led_test = LedTest::ShortReady;
-                        // NOTE: This should be quick, but we don't want to poll
-                        led_test::spawn_after(2_u32.millis()).unwrap();
-                        led_frame_process::spawn().ok(); // Attempt to schedule frame earlier
-                    }
-                    LedTest::ShortReady => {
-                        // Read short results
-                        let short_results = issi.short_circuit_raw().unwrap();
-
-                        // 1 byte id, 1 byte length, 32 bytes of data, 1 byte id, ...
-                        // Buffer size defined by kiibohd_hidio
-                        let mut data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }> =
-                            heapless::Vec::new();
-                        data.push(0).unwrap(); // Id
-                        data.push(32).unwrap(); // Length
-                        data.extend_from_slice(&short_results[0]).unwrap(); // Data
-                        data.push(1).unwrap(); // Id
-                        data.push(32).unwrap(); // Length
-                        data.extend_from_slice(&short_results[1]).unwrap(); // Data
-                        hidio_intf
-                            .h0051_manufacturingres(h0051::Cmd {
-                                command: h0051::Command::LedTestSequence,
-                                argument: h0051::Argument {
-                                    led_test_sequence: h0051::args::LedTestSequence::LedShortTest,
-                                },
-                                data,
-                            })
-                            .unwrap();
-
-                        *led_test = LedTest::Reset;
-                    }
-                    LedTest::OpenQuery => {
-                        // Schedule read of the short test results
-                        issi.open_circuit_detect_read().unwrap();
-                        *led_test = LedTest::OpenReady;
-                        // NOTE: This should be quick, but we don't want to poll
-                        led_test::spawn_after(2_u32.millis()).unwrap();
-                        led_frame_process::spawn().ok(); // Attempt to schedule frame earlier
-                    }
-                    LedTest::OpenReady => {
-                        // Read short results
-                        let open_results = issi.open_circuit_raw().unwrap();
-
-                        // 1 byte id, 1 byte length, 32 bytes of data, 1 byte id, ...
-                        // Buffer size defined by kiibohd_hidio
-                        let mut data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }> =
-                            heapless::Vec::new();
-                        data.push(0).unwrap(); // Id
-                        data.push(32).unwrap(); // Length
-                        data.extend_from_slice(&open_results[0]).unwrap(); // Data
-                        data.push(1).unwrap(); // Id
-                        data.push(32).unwrap(); // Length
-                        data.extend_from_slice(&open_results[1]).unwrap(); // Data
-                        hidio_intf
-                            .h0051_manufacturingres(h0051::Cmd {
-                                command: h0051::Command::LedTestSequence,
-                                argument: h0051::Argument {
-                                    led_test_sequence:
-                                        h0051::args::LedTestSequence::LedOpenCircuitTest,
-                                },
-                                data,
-                            })
-                            .unwrap();
-
-                        *led_test = LedTest::Reset;
-                    }
-                    _ => {}
+        (cx.shared.hidio_intf, cx.shared.issi, cx.shared.led_test).lock(
+            |hidio_intf, issi, led_test| {
+                // Check if we need to schedule led_test and led_frame_process
+                if kiibohd_atsam4s::issi_spi::led_test_task(hidio_intf, issi, led_test) {
+                    led_test::spawn_after(2_u32.millis()).unwrap();
+                    led_frame_process::spawn().ok(); // Attempt to schedule frame earlier
                 }
-            });
+            },
+        );
     }
 
     /// Macro Processing Task
@@ -784,65 +377,21 @@ mod app {
         (cx.shared.layer_state, cx.shared.matrix).lock(|layer_state, matrix| {
             // Query HID LED Events
             cx.shared.hidio_intf.lock(|hidio_intf| {
-                while let Some(state) = cx.local.kbd_led_consumer.dequeue() {
-                    // Convert to a TriggerEvent
-                    let event = state.trigger_event();
-                    let hidio_event = HidIoEvent::TriggerEvent(event);
-
-                    // Enqueue KLL trigger event
-                    let ret = layer_state.process_trigger::<MAX_LAYER_LOOKUP_SIZE>(event);
-                    debug_assert!(ret.is_ok(), "Failed to enqueue: {:?} - {:?}", event, ret);
-
-                    // Enqueue HID-IO trigger event
-                    if let Err(err) = hidio_intf.process_event(hidio_event) {
-                        defmt::error!("Hidio TriggerEvent Error: {:?}", err);
-                    }
-                }
+                kiibohd_atsam4s::macro_process_led_events_task(
+                    cx.local.kbd_led_consumer,
+                    hidio_intf,
+                    layer_state,
+                );
             });
 
-            // Confirm off-state lookups
-            layer_state.process_off_state_lookups::<MAX_LAYER_LOOKUP_SIZE>(&|index| {
-                matrix.generate_event(index)
-            });
-
-            // Finalize triggers to generate CapabilityRun events
-            for cap_run in layer_state.finalize_triggers::<MAX_LAYER_LOOKUP_SIZE>() {
-                match cap_run {
-                    kll_core::CapabilityRun::NoOp { .. } => {}
-                    kll_core::CapabilityRun::HidKeyboard { .. }
-                    | kll_core::CapabilityRun::HidKeyboardState { .. } => {
-                        debug_assert!(
-                            kiibohd_usb::enqueue_keyboard_event(cap_run, cx.local.kbd_producer)
-                                .is_ok(),
-                            "KBD_QUEUE_SIZE too small"
-                        );
-                    }
-                    kll_core::CapabilityRun::HidProtocol { .. } => {}
-                    kll_core::CapabilityRun::HidConsumerControl { .. }
-                    | kll_core::CapabilityRun::HidSystemControl { .. } => {
-                        debug_assert!(
-                            kiibohd_usb::enqueue_ctrl_event(cap_run, cx.local.ctrl_producer)
-                                .is_ok(),
-                            "CTRL_QUEUE_SIZE too small"
-                        );
-                    }
-                    /*
-                    kll_core::CapabilityRun::McuFlashMode { .. } => {}
-                    kll_core::CapabilityRun::HidioOpenUrl { .. }
-                    | kll_core::CapabilityRun::HidioUnicodeString { .. }
-                    | kll_core::CapabilityRun::HidioUnicodeState { .. } => {}
-                    kll_core::CapabilityRun::LayerClear { .. }
-                    | kll_core::CapabilityRun::LayerRotate { .. }
-                    | kll_core::CapabilityRun::LayerState { .. } => {}
-                    */
-                    _ => {
-                        panic!("{:?} is unsupported by this keyboard", cap_run);
-                    }
-                }
-            }
-
-            // Next time iteration
-            layer_state.increment_time();
+            // Process macros
+            kiibohd_atsam4s::macro_process_task::<CSIZE, MSIZE, Matrix> (
+                cx.local.ctrl_producer,
+                cx.local.kbd_producer,
+                cx.local.mouse_producer,
+                layer_state,
+                matrix,
+            );
         });
 
         // Schedule USB processing
@@ -862,24 +411,7 @@ mod app {
         let usb_dev = cx.shared.usb_dev;
         let usb_hid = cx.shared.usb_hid;
         (usb_hid, usb_dev).lock(|usb_hid, usb_dev| {
-            // Update USB events
-            if usb_hid.update() {
-                match usb_dev.state() {
-                    UsbDeviceState::Suspend => {
-                        // Issue USB Resume if enabled
-                        if usb_dev.remote_wakeup_enabled() {
-                            usb_dev.bus().remote_wakeup();
-                        }
-                    }
-
-                    UsbDeviceState::Configured => {
-                        // Commit USB events
-                        while usb_hid.push().is_err() {}
-                    }
-
-                    _ => {}
-                }
-            }
+            kiibohd_atsam4s::usb_process_task(usb_dev, usb_hid);
         });
     }
 
@@ -900,142 +432,22 @@ mod app {
         let layer_state = cx.shared.layer_state;
         let manu_test_data = cx.local.manu_test_data;
         let matrix = cx.shared.matrix;
-        // Determine if we should collect manufacturing data
-        // There is too much data to send after every scan cycle (overwhelms HID-IO and USB)
-        let collect_manu_test = *cx.local.strobe_cycle % 25 == 0;
 
         (adc, hidio_intf, layer_state, matrix).lock(|adc_pdc, hidio_intf, layer_state, matrix| {
-            // Retrieve DMA buffer
-            let (buf, adc) = adc_pdc.take().unwrap().wait();
-            //defmt::trace!("DMA BUF: {}", buf);
+            let strobe = kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
+                adc_pdc,
+                hidio_intf,
+                layer_state,
+                manu_test_data,
+                matrix,
+                cx.local.strobe_cycle,
+                SWITCH_REMAP,
+            );
 
-            // Current strobe
-            let strobe = matrix.strobe();
-
-            // Manufacturing test data
-            // Used to accumulate ADC data for manufacturing tests
-            if collect_manu_test {
-                manu_test_data.push(strobe as u8).unwrap(); // Current strobe in buffer
-                manu_test_data.push(RSIZE as u8).unwrap(); // Size of buffer
+            // Process macros after full strobe cycle
+            if strobe == 0 && macro_process::spawn().is_err() {
+                defmt::warn!("Could not schedule macro_process");
             }
-
-            // Process retrieved ADC buffer
-            // Loop through buffer. The buffer may have multiple buffers for each key.
-            // For example, 13 entries + 6 rows, column 1:
-            //  Col Row Channel Sample: Entry
-            //    1   5       9      0  N/A (ignored, previous column reading)
-            //    1   0       0      1  6 * 1 + 1 = 7
-            //    1   1       1      2  6 * 1 + 2 = 8
-            //    1   2       2      3  6 * 1 + 3 = 9
-            //    1   3       3      4  6 * 1 + 4 = 10
-            //    1   4       8      5  6 * 1 + 5 = 11
-            //    1   5       9      6  6 * 1 + 0 = 6
-            //    1   0       0      7  6 * 1 + 1 = 7
-            //    1   1       1      8  6 * 1 + 2 = 8
-            //    1   2       2      9  6 * 1 + 3 = 9
-            //    1   3       3     10  6 * 1 + 4 = 10
-            //    1   4       8     11  6 * 1 + 5 = 11
-            //    1   5       9     12  6 * 1 + 5 = 11
-            for (i, sample) in buf.iter().enumerate() {
-                // Ignore the first sample in the column (as it's data from the previous column)
-                if i == 0 {
-                    continue;
-                }
-
-                // Handle multiple samples from the same buffer
-                let channel = (sample & 0xF000) >> 12;
-                let sample = sample & 0x0FFF;
-
-                // Remap channels to rows
-                let row = match channel {
-                    0..=3 => channel,
-                    8 => 4,
-                    9 => 5,
-                    _ => continue,
-                } as usize;
-
-                let index = row * CSIZE + strobe;
-                match matrix.record::<ADC_SAMPLES>(index, sample) {
-                    Ok(val) => {
-                        // If data bucket has accumulated enough samples, pass to the next stage
-                        if let Some(sense) = val {
-                            // Store data for manufacturing test results
-                            if collect_manu_test {
-                                manu_test_data
-                                    .extend_from_slice(&sense.raw.to_le_bytes())
-                                    .unwrap();
-                            }
-
-                            for event in sense.trigger_event(SWITCH_REMAP[index] as usize, false) {
-                                let _hidio_event = HidIoEvent::TriggerEvent(event);
-
-                                // Enqueue KLL trigger event
-                                let ret =
-                                    layer_state.process_trigger::<MAX_LAYER_LOOKUP_SIZE>(event);
-                                assert!(ret.is_ok(), "Failed to enqueue: {:?} - {:?}", event, ret);
-
-                                /* TODO - Logs too noisy currently
-                                // Enqueue HID-IO trigger event
-                                    if let Err(err) = hidio_intf.process_event(hidio_event)
-                                    {
-                                        defmt::error!(
-                                            "Hidio TriggerEvent Error: {:?}",
-                                            err
-                                        );
-                                    }
-                                */
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        defmt::error!(
-                            "Sample record failed ({}, {}, {}):{} -> {}",
-                            i,
-                            strobe,
-                            index,
-                            sample,
-                            e
-                        );
-                    }
-                }
-            }
-
-            // Strobe next column
-            if let Ok(strobe) = matrix.next_strobe() {
-                // When the manufacturing test buffer is full, send it and clear the buffer
-                if collect_manu_test && manu_test_data.len() + 2 + RSIZE > manu_test_data.capacity()
-                {
-                    // If manufacturing test is enabled, send accumulated data
-                    if hidio_intf.interface().manufacturing_config.hall_level_check
-                        && hidio_intf
-                            .h0051_manufacturingres(h0051::Cmd {
-                                command: h0051::Command::HallEffectSensorTest,
-                                argument: h0051::Argument {
-                                    hall_effect_sensor_test:
-                                        h0051::args::HallEffectSensorTest::LevelCheck,
-                                },
-                                data: manu_test_data.clone(),
-                            })
-                            .is_err()
-                    {
-                        defmt::warn!("Buffer full, failed to send hall level check data");
-                    }
-
-                    // Clear manufacturing test data
-                    manu_test_data.clear();
-                }
-                // On strobe wrap-around, schedule event processing
-                if strobe == 0 {
-                    // Increment strobe cycle
-                    *cx.local.strobe_cycle = cx.local.strobe_cycle.wrapping_add(1);
-                    if macro_process::spawn().is_err() {
-                        defmt::warn!("Could not schedule macro_process");
-                    }
-                }
-            }
-
-            // Prepare next DMA read, but don't start it yet
-            adc_pdc.replace(adc.read_paused(buf));
         });
     }
 
@@ -1050,26 +462,9 @@ mod app {
         let spi_periph = cx.shared.spi;
         let spi_rxtx = cx.shared.spi_rxtx;
 
-        (spi_periph, spi_rxtx, issi).lock(|spi_periph, spi_rxtx, issi| {
-            // Retrieve DMA buffer
-            if let Some(spi_buf) = spi_rxtx.take() {
-                let ((rx_buf, tx_buf), spi) = spi_buf.wait();
-
-                // Process Rx buffer if applicable
-                issi.rx_function(rx_buf).unwrap();
-
-                // Prepare the next DMA transaction
-                if let Ok((rx_len, tx_len)) = issi.tx_function(tx_buf) {
-                    spi_rxtx.replace(spi.read_write_len(rx_buf, rx_len, tx_buf, tx_len));
-                } else {
-                    // Disable PDC
-                    let mut spi = spi.revert();
-                    spi.disable_txbufe_interrupt();
-
-                    // No more transactions ready, park spi peripheral and buffers
-                    spi_periph.replace((spi, rx_buf, tx_buf));
-                }
-            }
+        // Handle SPI DMA transfers
+        (issi, spi_periph, spi_rxtx).lock(|issi, spi_periph, spi_rxtx| {
+            kiibohd_atsam4s::issi_spi::spi_irq(issi, spi_periph, spi_rxtx);
         });
     }
 
@@ -1086,39 +481,7 @@ mod app {
 
         // Poll USB endpoints
         (usb_dev, usb_hid, hidio_intf).lock(|usb_dev, usb_hid, hidio_intf| {
-            if usb_dev.poll(&mut usb_hid.interfaces()) {
-                // Retrive HID Lock LED events
-                usb_hid.pull();
-
-                // Process HID-IO
-                usb_hid.pull_hidio(hidio_intf);
-            }
-            // Attempt to tx any HID-IO packets
-            usb_hid.push_hidio(hidio_intf);
+            kiibohd_atsam4s::udp_irq(usb_dev, usb_hid, hidio_intf);
         });
-    }
-}
-
-#[exception]
-unsafe fn HardFault(_ef: &cortex_m_rt::ExceptionFrame) -> ! {
-    panic!("HardFault!");
-}
-
-defmt::timestamp!("{=u64} us", {
-    atsam4_hal::timer::DwtTimer::<{ constants::MCU_FREQ }>::now()
-        / ((constants::MCU_FREQ / 1_000_000) as u64)
-});
-
-// same panicking *behavior* as `panic-probe` but doesn't print a panic message
-// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
-#[defmt::panic_handler]
-fn panic() -> ! {
-    cortex_m::asm::udf()
-}
-
-/// Terminates the application and makes `probe-run` exit with exit-code = 0
-pub fn exit() -> ! {
-    loop {
-        cortex_m::asm::bkpt();
     }
 }

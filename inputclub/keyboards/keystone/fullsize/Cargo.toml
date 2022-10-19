@@ -1,9 +1,9 @@
 [package]
-name = "keystonetkl"
+name = "keystonefs"
 version = "0.1.0"
 authors = ["Jacob Alexander <haata@kiibohd.com>"]
 edition = "2021"
-description = "Input Club - Keystone - Tenkeyless analog keyboard firmware"
+description = "Input Club - Keystone - Fullsize analog keyboard firmware"
 keywords = ["arm", "cortex-m", "atsam4", "atsam4s", "atsam4s8b", "hal"]
 categories = ["embedded", "hardware-support", "no-std"]
 license = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ repository = "https://github.com/kiibohd/kiibohd-firmware"
 path = "src/lib.rs"
 
 [[bin]]
-name = "keystonetkl"
+name = "keystonefs"
 path = "src/bin.rs"
 
 [dependencies]

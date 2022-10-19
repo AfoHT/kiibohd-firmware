@@ -6,8 +6,9 @@
 // copied, modified, or distributed except according to those terms.
 
 use super::constants::*;
+use atsam4_hal as hal;
 use core::fmt::Write;
-use gemini::hal::chipid::ChipId;
+use hal::chipid::ChipId;
 use heapless::{String, Vec};
 use kiibohd_hid_io::*;
 
@@ -19,8 +20,10 @@ pub struct ManufacturingConfig {
     pub led_short_test: bool,
     /// Lumissil LED open test
     pub led_open_test: bool,
-    /// Switch shake test (cycles color of switch LED on each press and release event)
-    pub shake_test_led_cycle: bool,
+    /// Hall Effect detect default level test (pass/fail)
+    pub hall_pass_fail_test: bool,
+    /// Hall Effect level check
+    pub hall_level_check: bool,
 }
 
 #[derive(defmt::Format)]
@@ -41,10 +44,11 @@ pub struct HidioInterface<const H: usize> {
     pub manufacturing_config: ManufacturingConfig,
     mcu: Option<String<12>>,
     serial: Option<String<126>>,
+    firmware_version: &'static str,
 }
 
 impl<const H: usize> HidioInterface<H> {
-    pub fn new(chip: &ChipId, serial: Option<String<126>>) -> Self {
+    pub fn new(chip: &ChipId, serial: Option<String<126>>, firmware_version: &'static str) -> Self {
         let mcu = if let Some(model) = chip.model() {
             let mut mcu: String<12> = String::new();
             if write!(mcu, "{:?}", model).is_ok() {
@@ -61,7 +65,8 @@ impl<const H: usize> HidioInterface<H> {
             led_test_sequence: false,
             led_short_test: false,
             led_open_test: false,
-            shake_test_led_cycle: false,
+            hall_pass_fail_test: false,
+            hall_level_check: false,
         };
 
         // Default to all controls disabled
@@ -83,6 +88,7 @@ impl<const H: usize> HidioInterface<H> {
             manufacturing_config,
             mcu,
             serial,
+            firmware_version,
         }
     }
 }
@@ -117,7 +123,7 @@ impl<const H: usize> KiibohdCommandInterface<H> for HidioInterface<H> {
     }
 
     fn h0001_firmware_version(&self) -> Option<&str> {
-        Some(VERGEN_GIT_SEMVER)
+        Some(self.firmware_version)
     }
 
     fn h0021_pixelsetting_cmd(&mut self, data: h0021::Cmd) -> Result<h0021::Ack, h0021::Nak> {
@@ -209,17 +215,25 @@ impl<const H: usize> KiibohdCommandInterface<H> for HidioInterface<H> {
                     }
                 }
             }
-            // Shake test
-            h0050::Command::LedCycleKeypressTest => {
-                match unsafe { data.argument.led_cycle_keypress_test } {
+            // Hall Effect tests
+            h0050::Command::HallEffectSensorTest => {
+                match unsafe { data.argument.hall_effect_sensor_test } {
                     // Disables
-                    h0050::args::LedCycleKeypressTest::Disable => {
-                        self.manufacturing_config.shake_test_led_cycle = false;
+                    h0050::args::HallEffectSensorTest::DisableAll => {
+                        self.manufacturing_config.hall_pass_fail_test = false;
+                        self.manufacturing_config.hall_level_check = false;
                         Ok(h0050::Ack {})
                     }
-                    // Enables shake test
-                    h0050::args::LedCycleKeypressTest::Enable => {
-                        self.manufacturing_config.shake_test_led_cycle = true;
+                    // Enables pass/fail test
+                    // Sends data using h0051
+                    h0050::args::HallEffectSensorTest::PassFailTestToggle => {
+                        self.manufacturing_config.hall_pass_fail_test = true;
+                        Ok(h0050::Ack {})
+                    }
+                    // Enables level check mode
+                    // Sends data using h0051
+                    h0050::args::HallEffectSensorTest::LevelCheckToggle => {
+                        self.manufacturing_config.hall_level_check = true;
                         Ok(h0050::Ack {})
                     }
                 }

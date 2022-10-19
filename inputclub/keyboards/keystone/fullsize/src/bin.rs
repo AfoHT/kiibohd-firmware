@@ -15,35 +15,35 @@ mod constants;
 // RTIC requires that unused interrupts are declared in an extern block when
 // using software tasks; these free interrupts will be used to dispatch the
 // software tasks.
-#[rtic::app(device = kiibohd_atsam4s::hal::pac, peripherals = true, dispatchers = [UART1, USART0, USART1, SSC, PWM, ACC, ADC, SPI])]
+#[rtic::app(device = kiibohd_atsam4s::hal::pac, peripherals = true, dispatchers = [UART1, USART0, USART1, SSC, PWM, ACC, TWI0, TWI1])]
 mod app {
     use crate::constants::*;
     use dwt_systick_monotonic::*;
-    use gemini::{kll, Pins};
+    use keystonefs::{kll, Pins};
     use kiibohd_atsam4s::{
         self,
         constants::*,
         hal::{
             clock::{Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock},
-            gpio::*,
             pac::TC0,
+            pdc::ReadDma,
             prelude::*,
             timer::TimerCounterChannel,
             udp::{usb_device::bus::UsbBusAllocator, UdpBus},
             watchdog::Watchdog,
-            ToggleableOutputPin,
         },
         heapless::{
+            self,
             spsc::{Consumer, Producer, Queue},
             String,
         },
-        kiibohd_usb, LayerState,
+        kiibohd_hid_io, kiibohd_usb, LayerState,
     };
 
     // ----- Types -----
 
     type LayerLookup = kiibohd_atsam4s::kll_core::layout::LayerLookup<'static, LAYOUT_SIZE>;
-    type Matrix = kiibohd_atsam4s::keyscanning::KeyMatrix<CSIZE, RSIZE, MSIZE, SCAN_PERIOD_US>;
+    type Matrix = kiibohd_atsam4s::hall_effect::HallMatrix<CSIZE, MSIZE>;
 
     #[monotonic(binds = SysTick, default = true)]
     type DwtMono = DwtSystick<MCU_FREQ>;
@@ -55,9 +55,17 @@ mod app {
     //
     #[shared]
     struct Shared {
+        adc: Option<kiibohd_atsam4s::hall_effect::AdcTransfer<ADC_BUF_SIZE>>,
         hidio_intf: kiibohd_atsam4s::HidioCommandInterface,
-        layer_state: kiibohd_atsam4s::LayerState,
+        issi: kiibohd_atsam4s::issi_spi::Is31fl3743bAtsam4Dma<
+            ISSI_DRIVER_CHIPS,
+            ISSI_DRIVER_QUEUE_SIZE,
+        >,
+        layer_state: LayerState,
+        led_test: kiibohd_atsam4s::LedTest,
         matrix: Matrix,
+        spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
+        spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
         usb_dev: kiibohd_atsam4s::UsbDevice,
         usb_hid: kiibohd_atsam4s::HidInterface,
     }
@@ -69,11 +77,12 @@ mod app {
     #[local]
     struct Local {
         ctrl_producer: Producer<'static, kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE>,
-        debug_led: Pb0<Output<PushPull>>,
         kbd_led_consumer: Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
+        manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: kiibohd_atsam4s::RealTimeTimer,
+        strobe_cycle: u32,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
         tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
         wdt: Watchdog,
@@ -84,15 +93,18 @@ mod app {
     //
     #[init(
         local = [
+            adc_buf: [u16; ADC_BUF_SIZE] = [0; ADC_BUF_SIZE],
             ctrl_queue: Queue<kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE> = Queue::new(),
             kbd_queue: Queue<kiibohd_usb::KeyState, KBD_QUEUE_SIZE> = Queue::new(),
             kbd_led_queue: Queue<kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE> = Queue::new(),
             mouse_queue: Queue<kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE> = Queue::new(),
             serial_number: String<126> = String::new(),
+            spi_tx_buf: [u32; SPI_TX_BUF_SIZE] = [0; SPI_TX_BUF_SIZE],
+            spi_rx_buf: [u32; SPI_RX_BUF_SIZE] = [0; SPI_RX_BUF_SIZE],
             usb_bus: Option<UsbBusAllocator<UdpBus>> = None,
     ])]
     fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        let (wdt, clocks, chip, mut tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
+        let (wdt, mut clocks, chip, mut tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
             cx.device.CHIPID,
             cx.device.EFC0,
             cx.device.PIOA,
@@ -108,10 +120,12 @@ mod app {
         );
 
         // Setup pins
-        let pins = Pins::new(gpio_ports, &cx.device.MATRIX);
+        let mut pins = Pins::new(gpio_ports, &cx.device.MATRIX);
 
-        // Setup Keyscanning Matrix
-        let matrix = kiibohd_atsam4s::keyscanning::init::<CSIZE, RSIZE, MSIZE, SCAN_PERIOD_US>(
+        // Setup hall effect matrix
+        let (adc, matrix) = kiibohd_atsam4s::hall_effect::init::<CSIZE, MSIZE>(
+            cx.device.ADC,
+            clocks.peripheral_clocks.adc.into_enabled_clock(),
             [
                 pins.strobe1.downgrade(),
                 pins.strobe2.downgrade(),
@@ -130,15 +144,18 @@ mod app {
                 pins.strobe15.downgrade(),
                 pins.strobe16.downgrade(),
                 pins.strobe17.downgrade(),
+                pins.strobe18.downgrade(),
+                pins.strobe19.downgrade(),
+                pins.strobe20.downgrade(),
+                pins.strobe21.downgrade(),
+                pins.strobe22.downgrade(),
             ],
-            [
-                pins.sense1.downgrade(),
-                pins.sense2.downgrade(),
-                pins.sense3.downgrade(),
-                pins.sense4.downgrade(),
-                pins.sense5.downgrade(),
-                pins.sense6.downgrade(),
-            ],
+            &mut pins.sense1,
+            &mut pins.sense2,
+            &mut pins.sense3,
+            &mut pins.sense4,
+            &mut pins.sense5,
+            &mut pins.sense6,
             &mut tc0_chs,
         );
 
@@ -156,6 +173,23 @@ mod app {
 
         // Initialize LayerState for kll-core
         let layer_state = LayerState::new(layer_lookup, 0);
+
+        // ISSI + SPI Driver setup
+        let issi_default_brightness = 255; // TODO compile-time configuration + flash default
+        let issi_default_enable = true; // TODO compile-time configuration + flash default
+        let (spi_rxtx, issi) = kiibohd_atsam4s::issi_spi::init(
+            &mut pins.debug_led,
+            issi_default_brightness,
+            issi_default_enable,
+            cx.device.SPI,
+            clocks.peripheral_clocks.spi.into_enabled_clock(),
+            pins.spi_miso,
+            pins.spi_mosi,
+            cx.local.spi_rx_buf,
+            pins.spi_sck,
+            cx.local.spi_tx_buf,
+            &mut tc0_chs,
+        );
 
         // Setup USB + HID-IO interface
         let (
@@ -182,35 +216,36 @@ mod app {
             cx.local.usb_bus,
         );
 
-        // LED Frame Timer
-        let mut tcc1 = tc0_chs.ch1;
-        tcc1.clock_input(TCC1_DIV);
-        tcc1.start(17_u32.millis()); // 17 ms -> ~60 fps (16.6667 ms)
-        defmt::trace!("TCC1 started - LED Frame Scheduling");
-        tcc1.enable_interrupt();
-
         // Initialize tickless monotonic timer
         let mono = DwtSystick::new(&mut cx.core.DCB, cx.core.DWT, cx.core.SYST, MCU_FREQ);
         defmt::trace!("DwtSystick (Monotonic) started");
 
         // Manufacturing test data buffer
+        let manu_test_data = heapless::Vec::new();
+
         (
             Shared {
+                adc: Some(adc.read(cx.local.adc_buf)),
                 hidio_intf,
+                issi,
                 layer_state,
+                led_test: kiibohd_atsam4s::LedTest::Disabled,
                 matrix,
+                spi: None,
+                spi_rxtx: Some(spi_rxtx),
                 usb_dev,
                 usb_hid,
             },
             Local {
                 ctrl_producer,
-                debug_led: pins.debug_led,
                 kbd_led_consumer,
                 kbd_producer,
+                manu_test_data,
                 mouse_producer,
                 rtt,
+                strobe_cycle: 0,
                 tcc0: tc0_chs.ch0,
-                tcc1,
+                tcc1: tc0_chs.ch1,
                 wdt,
             },
             init::Monotonics(mono),
@@ -225,29 +260,16 @@ mod app {
     #[task(priority = 13, binds = TC0, local = [
         tcc0,
     ], shared = [
-        hidio_intf,
-        layer_state,
-        matrix,
+        adc,
     ])]
-    fn tc0(cx: tc0::Context) {
-        let hidio_intf = cx.shared.hidio_intf;
-        let layer_state = cx.shared.layer_state;
-        let matrix = cx.shared.matrix;
-
+    fn tc0(mut cx: tc0::Context) {
         // Check for keyscanning interrupt (tcc0)
-        (hidio_intf, layer_state, matrix).lock(|hidio_intf, layer_state, matrix| {
-            let process_macros = kiibohd_atsam4s::keyscanning::tc0_irq::<
-                CSIZE,
-                RSIZE,
-                MSIZE,
-                SCAN_PERIOD_US,
-            >(
-                hidio_intf, layer_state, matrix, SWITCH_REMAP, cx.local.tcc0
-            );
-
-            // If a full matrix scanning cycle has finished, process macros
-            if process_macros && macro_process::spawn().is_err() {
-                defmt::warn!("Could not schedule macro_process");
+        cx.shared.adc.lock(|adc| {
+            if cx.local.tcc0.clear_interrupt_flags() {
+                // Start next ADC DMA buffer read
+                if let Some(adc) = adc {
+                    adc.resume();
+                }
             }
         });
     }
@@ -272,7 +294,6 @@ mod app {
     /// Activity tick
     /// Used visually determine MCU status
     #[task(priority = 1, binds = RTT, local = [
-        debug_led,
         rtt,
         wdt,
     ], shared = [])]
@@ -281,10 +302,6 @@ mod app {
 
         // Feed watchdog
         cx.local.wdt.feed();
-
-        // Blink debug led
-        // TODO: Remove (or use feature flag)
-        cx.local.debug_led.toggle().ok();
     }
 
     /// LED Frame Processing Task
@@ -292,17 +309,59 @@ mod app {
     /// Frames are skipped if the previous frame is still processing.
     #[task(priority = 8, shared = [
         hidio_intf,
+        issi,
+        led_test,
+        spi,
+        spi_rxtx,
     ])]
-    fn led_frame_process(mut cx: led_frame_process::Context) {
-        cx.shared.hidio_intf.lock(|_hidio_intf| {
-            // TODO
-        });
+    fn led_frame_process(cx: led_frame_process::Context) {
+        (cx.shared.hidio_intf, cx.shared.issi, cx.shared.led_test).lock(
+            |hidio_intf, issi, led_test| {
+                // Look for manufacturing test commands
+                let (regular_processing, spawn_led_test) =
+                    kiibohd_atsam4s::issi_spi::led_frame_process_manufacturing_tests_task(
+                        hidio_intf, issi, led_test,
+                    );
 
-        // Handle processing of "next" frame
-        // If this takes too long, the next frame update won't be scheduled (i.e. it'll be
-        // skipped).
-        // TODO - KLL Pixelmap
-        // TODO - HIDIO frame updates
+                // Even though AN-107 - OPEN SHORT TEST FUNCTION OF IS31FL3743B says
+                // that only 1ms is required, in practice 2ms seems more reliable.
+                if spawn_led_test {
+                    led_test::spawn_after(2000_u32.micros()).unwrap();
+                }
+
+                // Enable SPI DMA to update frame
+                (cx.shared.spi, cx.shared.spi_rxtx).lock(|spi_periph, spi_rxtx| {
+                    kiibohd_atsam4s::issi_spi::led_frame_process_is31fl3743b_dma_task(
+                        hidio_intf,
+                        issi,
+                        spi_periph,
+                        spi_rxtx,
+                        regular_processing,
+                    );
+                });
+            },
+        );
+    }
+
+    /// LED Test Results
+    /// Asynchronous task to handle LED test results (both short and open).
+    /// This task is schedule at least 750 us after the test is started.
+    #[task(priority = 7, shared = [
+        hidio_intf,
+        issi,
+        led_test,
+    ])]
+    fn led_test(cx: led_test::Context) {
+        // Check for test results
+        (cx.shared.hidio_intf, cx.shared.issi, cx.shared.led_test).lock(
+            |hidio_intf, issi, led_test| {
+                // Check if we need to schedule led_test and led_frame_process
+                if kiibohd_atsam4s::issi_spi::led_test_task(hidio_intf, issi, led_test) {
+                    led_test::spawn_after(2_u32.millis()).unwrap();
+                    led_frame_process::spawn().ok(); // Attempt to schedule frame earlier
+                }
+            },
+        );
     }
 
     /// Macro Processing Task
@@ -330,7 +389,7 @@ mod app {
             });
 
             // Process macros
-            kiibohd_atsam4s::macro_process_task::<CSIZE, MSIZE, Matrix>(
+            kiibohd_atsam4s::macro_process_task::<CSIZE, MSIZE, Matrix> (
                 cx.local.ctrl_producer,
                 cx.local.kbd_producer,
                 cx.local.mouse_producer,
@@ -360,15 +419,58 @@ mod app {
         });
     }
 
-    /// ISSI I2C0 Interrupt
-    #[task(priority = 12, binds = TWI0)]
-    fn twi0(_: twi0::Context) {
-        //unsafe { TWI0_Handler() };
+    /// ADC Interrupt
+    #[task(priority = 14, binds = ADC, local = [
+        manu_test_data,
+        strobe_cycle,
+    ], shared = [
+        adc,
+        hidio_intf,
+        layer_state,
+        matrix,
+        usb_hid,
+    ])]
+    fn adc(cx: adc::Context) {
+        let adc = cx.shared.adc;
+        let hidio_intf = cx.shared.hidio_intf;
+        let layer_state = cx.shared.layer_state;
+        let manu_test_data = cx.local.manu_test_data;
+        let matrix = cx.shared.matrix;
+
+        (adc, hidio_intf, layer_state, matrix).lock(|adc_pdc, hidio_intf, layer_state, matrix| {
+            let strobe = kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
+                adc_pdc,
+                hidio_intf,
+                layer_state,
+                manu_test_data,
+                matrix,
+                cx.local.strobe_cycle,
+                SWITCH_REMAP,
+            );
+
+            // Process macros after full strobe cycle
+            if strobe == 0 && macro_process::spawn().is_err() {
+                defmt::warn!("Could not schedule macro_process");
+            }
+        });
     }
 
-    /// ISSI I2C1 Interrupt
-    #[task(priority = 12, binds = TWI1)]
-    fn twi1(_: twi1::Context) {}
+    /// SPI Interrupt
+    #[task(priority = 12, binds = SPI, shared = [
+        issi,
+        spi,
+        spi_rxtx,
+    ])]
+    fn spi(cx: spi::Context) {
+        let issi = cx.shared.issi;
+        let spi_periph = cx.shared.spi;
+        let spi_rxtx = cx.shared.spi_rxtx;
+
+        // Handle SPI DMA transfers
+        (issi, spi_periph, spi_rxtx).lock(|issi, spi_periph, spi_rxtx| {
+            kiibohd_atsam4s::issi_spi::spi_irq(issi, spi_periph, spi_rxtx);
+        });
+    }
 
     /// USB Device Interupt
     #[task(priority = 14, binds = UDP, shared = [

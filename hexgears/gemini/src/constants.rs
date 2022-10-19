@@ -5,43 +5,13 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use atsam4_hal::timer::ClockSource;
 use const_env::from_env;
 
-// ----- Flash Config -----
-
-pub const FLASH_CONFIG_SIZE: usize = 524288 / core::mem::size_of::<u32>();
-extern "C" {
-    #[link_name = "_flash"]
-    pub static mut FLASH_CONFIG: [u32; FLASH_CONFIG_SIZE];
-}
-
 // ----- Constants -----
-
-// General clock frequencies
-pub const MCU_FREQ: u32 = 120_000_000;
-
-// RTT frequency calculations
-pub const RTT_PRESCALER: usize = 4; // Most accurate than evenly counts seconds
-
-// Timer frequency calculations
-pub const TCC0_DIV: ClockSource = ClockSource::MckDiv128;
-pub const TCC0_FREQ: u32 = MCU_FREQ / TCC0_DIV.div();
-pub const TCC1_DIV: ClockSource = ClockSource::MckDiv128;
-pub const TCC1_FREQ: u32 = MCU_FREQ / TCC1_DIV.div();
-pub const TCC2_FREQ: u32 = TCC1_FREQ;
-
-pub const BUF_CHUNK: usize = 64;
-pub const ID_LEN: usize = 10;
-pub const RX_BUF: usize = 8;
-pub const SERIALIZATION_LEN: usize = 277;
-pub const TX_BUF: usize = 8;
 
 pub const CSIZE: usize = 17; // Number of columns
 pub const RSIZE: usize = 6; // Number of rows
 pub const MSIZE: usize = RSIZE * CSIZE; // Total matrix size
-pub const ISSI_DRIVER_CHANNELS: usize = 192;
-pub const ISSI_DRIVER_CHIPS: usize = 2;
 
 // Remap lookup
 // 0 mapped keys are ignored
@@ -150,39 +120,8 @@ pub const SWITCH_REMAP: &[u8] = &[
     106, // C17;R6:101
 ];
 
-pub const CTRL_QUEUE_SIZE: usize = 5;
-pub const KBD_QUEUE_SIZE: usize = 25;
-pub const KBD_LED_QUEUE_SIZE: usize = 3;
-pub const MOUSE_QUEUE_SIZE: usize = 10;
-
 pub const SCAN_PERIOD_US: u32 = 1000 / CSIZE as u32; // Scan all strobes within 1 ms (1000 Hz) for USB
-pub const DEBOUNCE_US: u32 = 5000; // 5 ms TODO Tuning
-pub const IDLE_MS: u32 = 600_000; // 600 seconds TODO Tuning
 
-// KLL Constants
-pub const LAYOUT_SIZE: usize = 256;
-pub const MAX_ACTIVE_LAYERS: usize = 8;
-pub const MAX_ACTIVE_TRIGGERS: usize = 64;
-pub const MAX_LAYERS: usize = 16;
-pub const MAX_LAYER_STACK_CACHE: usize = 64;
-pub const MAX_LAYER_LOOKUP_SIZE: usize = 64;
-pub const MAX_OFF_STATE_LOOKUP: usize = 16;
-pub const STATE_SIZE: usize = 32;
-
-#[from_env]
-pub const VID: u16 = 0x1c11;
-#[from_env]
-pub const PID: u16 = 0xb04d;
-#[from_env]
-pub const USB_MANUFACTURER: &str = "Unknown";
-#[from_env]
-pub const USB_PRODUCT: &str = "Kiibohd";
-#[from_env]
-pub const HIDIO_DEVICE_NAME: &str = "Kiibohd";
-#[from_env]
-pub const HIDIO_DEVICE_VENDOR: &str = "Unknown";
-#[from_env]
-pub const HIDIO_FIRMWARE_NAME: &str = "kiibohd-firmware";
 #[from_env]
 pub const VERGEN_GIT_SEMVER: &str = "N/A";
 #[from_env]

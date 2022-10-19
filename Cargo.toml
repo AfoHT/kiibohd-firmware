@@ -1,8 +1,10 @@
 [workspace]
 members = [
+    "common/atsam4s",
     "common/xtask",
     "hexgears/gemini",
     "inputclub/keyboards/keystone/tkl",
+    "inputclub/keyboards/keystone/fullsize",
 ]
 
 [patch.crates-io]
