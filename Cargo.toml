@@ -5,6 +5,7 @@ members = [
     "hexgears/gemini",
     "inputclub/keyboards/keystone/tkl",
     "inputclub/keyboards/keystone/fullsize",
+    "inputclub/keyboards/kira",
 ]
 
 [patch.crates-io]
