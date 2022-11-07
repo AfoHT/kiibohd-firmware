@@ -117,6 +117,29 @@ pub type UsbDevice = usb_device::device::UsbDevice<'static, UdpBus>;
 
 // ----- Initialization Functions -----
 
+/// Check user signature (up to 512-bytes of data)
+/// Currently only used to store the firmware revision number (16-bits)
+fn check_user_signature(efc: &mut Efc, revision: u16) -> bool {
+    // Read signature, and verify it
+    let mut sig: [u32; 1] = [0; 1];
+    efc.read_user_signature(&mut sig, 1).unwrap();
+
+    // First check if the user signature is empty
+    if sig[0] == 0xFFFFFFFF {
+        // Signature is empty, write the firmware revision number
+        sig[0] = 0xFFFF0000 | revision as u32;
+        efc.write_user_signature(&sig).unwrap();
+    } else {
+        // Signature is not empty, check if it matches the firmware revision number
+        if sig[0] & 0x0000FFFF != revision as u32 {
+            defmt::error!("Firmware revision mismatch! Expected: {:x}, Got: {:x}", revision, sig[0] & 0xFFFF);
+            return false;
+        }
+    }
+
+    true
+}
+
 /// Early initialization for atsam4s
 /// Handles
 /// - Chip ID
@@ -138,6 +161,7 @@ pub fn initial_init(
     main_clock: hal::clock::MainClock,
     slow_clock: hal::clock::SlowClock,
     serial_number: &mut String<126>,
+    revision: u16,
 ) -> (
     Watchdog,
     ClockController,
@@ -173,7 +197,7 @@ pub fn initial_init(
     defmt::trace!("Watchdog first feed");
 
     // Setup flash controller (needed for unique id)
-    let efc = Efc::new(efc0, unsafe { &mut FLASH_CONFIG });
+    let mut efc = Efc::new(efc0, unsafe { &mut FLASH_CONFIG });
     // Retrieve unique id and format it for the USB descriptor
     let uid = efc.read_unique_id().unwrap();
     write!(
@@ -183,6 +207,10 @@ pub fn initial_init(
     )
     .unwrap();
     defmt::info!("UID: {}", serial_number);
+
+    // Check user signature
+    check_user_signature(&mut efc, revision);
+    defmt::info!("Firmware revision: {:x}", revision);
 
     // Setup main timer
     let tc0 = TimerCounter::new(tc0);

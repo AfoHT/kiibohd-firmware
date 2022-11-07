@@ -105,6 +105,7 @@ mod app {
             MainClock::Crystal12Mhz,
             SlowClock::RcOscillator32Khz,
             cx.local.serial_number,
+            VERGEN_GIT_COMMIT_COUNT.parse().unwrap(),
         );
 
         // Setup pins
