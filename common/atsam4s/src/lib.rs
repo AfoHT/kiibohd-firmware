@@ -132,7 +132,11 @@ fn check_user_signature(efc: &mut Efc, revision: u16) -> bool {
     } else {
         // Signature is not empty, check if it matches the firmware revision number
         if sig[0] & 0x0000FFFF != revision as u32 {
-            defmt::error!("Firmware revision mismatch! Expected: {:x}, Got: {:x}", revision, sig[0] & 0xFFFF);
+            defmt::error!(
+                "Firmware revision mismatch! Expected: {:x}, Got: {:x}",
+                revision,
+                sig[0] & 0xFFFF
+            );
             return false;
         }
     }

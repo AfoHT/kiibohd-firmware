@@ -386,7 +386,7 @@ mod app {
             });
 
             // Process macros
-            kiibohd_atsam4s::macro_process_task::<CSIZE, MSIZE, Matrix> (
+            kiibohd_atsam4s::macro_process_task::<CSIZE, MSIZE, Matrix>(
                 cx.local.ctrl_producer,
                 cx.local.kbd_producer,
                 cx.local.mouse_producer,

@@ -19,7 +19,6 @@ mod constants;
 mod app {
     use crate::constants::*;
     use dwt_systick_monotonic::*;
-    use kira::{kll, Pins};
     use kiibohd_atsam4s::{
         self,
         constants::*,
@@ -39,6 +38,7 @@ mod app {
         },
         kiibohd_usb, LayerState,
     };
+    use kira::{kll, Pins};
 
     // ----- Types -----
 
