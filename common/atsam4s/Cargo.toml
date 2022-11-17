@@ -34,8 +34,7 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 paste = "1.0"
 
 [dependencies.atsam4-hal]
-git = "https://github.com/haata/atsam4-hal.git"
-version = "0.2.2"
+version = "0.2.3"
 default-features = false
 features = ["atsam4s8b", "usb"]
 
