@@ -64,7 +64,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: make
-          args: bin-dfu
+          args: bin-dfu-release
 
   fmt:
     name: Rustfmt

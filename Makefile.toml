@@ -3,11 +3,7 @@ extend = "common/common_makefile.toml"
 [env]
 CARGO_MAKE_WORKSPACE_EMULATION = true
 
-CARGO_MAKE_CRATE_WORKSPACE_MEMBERS = [
-    "hexgears/gemini",
-    "inputclub/keyboards/keystone/tkl",
-]
-
 CARGO_MAKE_WORKSPACE_SKIP_MEMBERS = [
+    "common/atsam4s",
     "common/xtask",
 ]

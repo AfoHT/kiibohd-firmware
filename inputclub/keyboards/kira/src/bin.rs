@@ -38,7 +38,7 @@ mod app {
         },
         kiibohd_usb, LayerState,
     };
-    use kira::{kll, Pins};
+    use kira96::{kll, Pins};
 
     // ----- Types -----
 
