@@ -8,25 +8,25 @@ members = [
     "inputclub/keyboards/kira",
 ]
 
-[patch.crates-io]
-kll-core = { path = "../kiibohd-core/kll-core" }
-kll-hid = { path = "../kiibohd-core/kll-hid" }
-kiibohd-keyscanning = { path = "../kiibohd-core/kiibohd-keyscanning" }
-kiibohd-hall-effect-keyscanning = { path = "../kiibohd-core/kiibohd-hall-effect-keyscanning" }
-kiibohd-usb = { path = "../kiibohd-core/kiibohd-usb" }
-kiibohd-hid-io = { path = "../kiibohd-core/kiibohd-hid-io" }
-hid-io-protocol = { path = "../hid-io-protocol" }
-is31fl3743b = { path = "../kiibohd-core/is31fl3743b" }
-usb-device = { path = "../usb-device" }
+#[patch.crates-io]
+#kll-core = { path = "../kiibohd-core/kll-core" }
+#kll-hid = { path = "../kiibohd-core/kll-hid" }
+#kiibohd-keyscanning = { path = "../kiibohd-core/kiibohd-keyscanning" }
+#kiibohd-hall-effect-keyscanning = { path = "../kiibohd-core/kiibohd-hall-effect-keyscanning" }
+#kiibohd-usb = { path = "../kiibohd-core/kiibohd-usb" }
+#kiibohd-hid-io = { path = "../kiibohd-core/kiibohd-hid-io" }
+#hid-io-protocol = { path = "../hid-io-protocol" }
+#is31fl3743b = { path = "../kiibohd-core/is31fl3743b" }
+#usb-device = { path = "../usb-device" }
 
-[patch."https://github.com/haata/usb-device.git"]
-usb-device = { path = "../usb-device" }
+#[patch."https://github.com/haata/usb-device.git"]
+#usb-device = { path = "../usb-device" }
 
-[patch."https://github.com/haata/usbd-hid.git"]
-usbd-hid = { path = "../usbd-hid" }
+#[patch."https://github.com/haata/usbd-hid.git"]
+#usbd-hid = { path = "../usbd-hid" }
 
-[patch."https://github.com/haata/atsam4-hal.git"]
-atsam4-hal = { path = "../atsam4-hal" }
+#[patch."https://github.com/haata/atsam4-hal.git"]
+#atsam4-hal = { path = "../atsam4-hal" }
 
 # XXX Important when using gdb XXX
 # NOTE: Comment this section out when using gdb for a better experience
