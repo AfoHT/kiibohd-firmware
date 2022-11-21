@@ -33,6 +33,21 @@ env = { "RUSTDOCFLAGS" = "-Dwarnings" }
 command = "cargo"
 args = ["doc", "--target", "${TARGET}"]
 
+# Requires cargo-udeps
+[tasks.udeps]
+command = "cargo"
+args = ["udeps", "--all-targets"]
+
+# Requires cargo-outdated
+[tasks.outdated]
+command = "cargo"
+args = ["outdated"]
+
+# Requires cargo-deny
+[tasks.deny]
+command = "cargo"
+args = ["deny", "check", "licenses"]
+
 [tasks.flash]
 command = "dfu-util"
 args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin", "--reset"]
