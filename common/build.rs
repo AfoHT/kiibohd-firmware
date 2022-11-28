@@ -18,7 +18,7 @@ fn main() {
 
     // Read variables from project.env
     println!("cargo:rerun-if-changed=project.env");
-    dotenv::from_filename("project.env").ok();
+    dotenvy::from_filename("project.env").ok();
 
     // Setup memory map for linker
     let linker_file = &PathBuf::from(env::var_os("TOP_LEVEL").unwrap())

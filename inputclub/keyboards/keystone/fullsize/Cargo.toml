@@ -25,6 +25,6 @@ kiibohd-atsam4s = { path = "../../../../common/atsam4s", features = ["hall-effec
 paste = "1.0"
 
 [build-dependencies]
-dotenv = "0.15"
+dotenvy = "0.15"
 kll-compiler = "0.1"
 vergen = { version = "7.4", default-features = false, features = ["git"] }
