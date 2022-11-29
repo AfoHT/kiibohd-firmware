@@ -30,7 +30,7 @@ jobs:
       - uses: actions-rust-lang/audit@v1
         name: Audit Rust Dependencies
         with:
-          ignore: RUSTSEC-2020-0036, RUSTSEC-2020-0071, RUSTSEC-2020-0095
+          ignore: RUSTSEC-2020-0036,RUSTSEC-2020-0071,RUSTSEC-2020-0095
 
   deny:
     runs-on: ubuntu-latest
