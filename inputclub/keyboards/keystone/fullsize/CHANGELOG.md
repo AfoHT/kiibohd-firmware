@@ -1,0 +1,33 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## v0.1.0 (2022-11-29)
+
+### Bug Fixes
+
+ - <csr-id-dd9e37c0a6d501df964495fff4435298df59cd95/> Update CHANGELOGs (start fresh)
+
+### Commit Statistics
+
+<csr-read-only-do-not-edit/>
+
+ - 2 commits contributed to the release over the course of 1 calendar day.
+ - 11 days passed between releases.
+ - 1 commit was understood as [conventional](https://www.conventionalcommits.org).
+ - 0 issues like '(#ID)' were seen in commit messages
+
+### Commit Details
+
+<csr-read-only-do-not-edit/>
+
+<details><summary>view details</summary>
+
+ * **Uncategorized**
+    - Update CHANGELOGs (start fresh) ([`dd9e37c`](https://github.com/kiibohd/kiibohd-firmware/commit/dd9e37c0a6d501df964495fff4435298df59cd95))
+    - Fix RUSTSEC-2021-0141 (dotenv->dotenvy) ([`c66aaf3`](https://github.com/kiibohd/kiibohd-firmware/commit/c66aaf3bcd348a5f294f108fb3ef05a3c63a3033))
+</details>
+
