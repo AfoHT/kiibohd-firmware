@@ -1,6 +1,6 @@
 [package]
 name = "gemini"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Jacob Alexander <haata@kiibohd.com>", "Zion Koyl <hiszd1@gmail.com>"]
 edition = "2021"
 description = "Hexgears Gemini Dusk/Dawn Keyboard"
