@@ -63,6 +63,7 @@ mod app {
         >,
         layer_state: LayerState,
         led_test: kiibohd_atsam4s::LedTest,
+        manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         matrix: Matrix,
         spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
         spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
@@ -79,10 +80,8 @@ mod app {
         ctrl_producer: Producer<'static, kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE>,
         kbd_led_consumer: Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
-        manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: kiibohd_atsam4s::RealTimeTimer,
-        strobe_cycle: u32,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
         tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
         wdt: Watchdog,
@@ -227,6 +226,7 @@ mod app {
                 issi,
                 layer_state,
                 led_test: kiibohd_atsam4s::LedTest::Disabled,
+                manu_test_data,
                 matrix,
                 spi: None,
                 spi_rxtx: Some(spi_rxtx),
@@ -237,10 +237,8 @@ mod app {
                 ctrl_producer,
                 kbd_led_consumer,
                 kbd_producer,
-                manu_test_data,
                 mouse_producer,
                 rtt,
-                strobe_cycle: 0,
                 tcc0: tc0_chs.ch0,
                 tcc1: tc0_chs.ch1,
                 wdt,
@@ -417,13 +415,11 @@ mod app {
     }
 
     /// ADC Interrupt
-    #[task(priority = 14, binds = ADC, local = [
-        manu_test_data,
-        strobe_cycle,
-    ], shared = [
+    #[task(priority = 14, binds = ADC, local = [], shared = [
         adc,
         hidio_intf,
         layer_state,
+        manu_test_data,
         matrix,
         usb_hid,
     ])]
@@ -431,7 +427,7 @@ mod app {
         let adc = cx.shared.adc;
         let hidio_intf = cx.shared.hidio_intf;
         let layer_state = cx.shared.layer_state;
-        let manu_test_data = cx.local.manu_test_data;
+        let manu_test_data = cx.shared.manu_test_data;
         let matrix = cx.shared.matrix;
 
         (adc, hidio_intf, layer_state, matrix).lock(|adc_pdc, hidio_intf, layer_state, matrix| {
@@ -441,7 +437,6 @@ mod app {
                 layer_state,
                 manu_test_data,
                 matrix,
-                cx.local.strobe_cycle,
                 SWITCH_REMAP,
             );
 

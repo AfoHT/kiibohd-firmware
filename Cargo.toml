@@ -8,11 +8,14 @@ members = [
     "inputclub/keyboards/kira",
 ]
 
-#[patch.crates-io]
+[patch.crates-io]
+#atsam4-hal = { path = "../atsam4-hal" }
+#atsam4s8b-pac = { path = "../atsam-pac/pac/atsam4s8b" }
 #kll-core = { path = "../kiibohd-core/kll-core" }
 #kll-hid = { path = "../kiibohd-core/kll-hid" }
 #kiibohd-keyscanning = { path = "../kiibohd-core/kiibohd-keyscanning" }
 #kiibohd-hall-effect-keyscanning = { path = "../kiibohd-core/kiibohd-hall-effect-keyscanning" }
+#kiibohd-hall-effect = { path = "../kiibohd-core/kiibohd-hall-effect" }
 #kiibohd-usb = { path = "../kiibohd-core/kiibohd-usb" }
 #kiibohd-hid-io = { path = "../kiibohd-core/kiibohd-hid-io" }
 #hid-io-protocol = { path = "../hid-io-protocol" }

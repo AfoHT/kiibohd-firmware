@@ -1,4 +1,4 @@
-// Copyright 2021-2022 Jacob Alexander
+// Copyright 2021-2023 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -7,6 +7,9 @@
 
 use atsam4_hal::timer::ClockSource;
 use const_env::from_env;
+
+#[cfg(feature = "hall-effect")]
+use crate::hall_effect::{AdcClock, SensorMode, SILO_ATSAM4S_LC605_GAIN_4X};
 
 // ----- Flash Config -----
 
@@ -37,16 +40,33 @@ pub const RX_BUF: usize = 8;
 pub const SERIALIZATION_LEN: usize = 277;
 pub const TX_BUF: usize = 8;
 
-pub const ADC_SAMPLES: usize = 2; // Number of samples per key per strobe
+// Hall Effect Constants
+pub const ADC_SAMPLES: usize = 1; // Number of samples per key per strobe
                                   // for the previous strobe's last sample)
+pub const MAX_DEVIATION: usize = 32; // Maximum deviation between samples taken with a buffer
+                                     // Used to reject outlier samples affected by noise
+pub const IDLE_LIMIT: usize = 40_000; // Number of idle samples before a key is considered idle
+                                      // This is approximately 30 seconds at 770 us periods
+                                      // Distance on the sensor to activate the switch (calibrated distance, not raw)
+pub const DEFAULT_ACTIVATION_DIST: i16 = 223;
+// Distance on the sensor to deactivate the switch (calibrated distance, not raw)
+pub const DEFAULT_DEACTIVATION_DIST: i16 = 123;
+
+#[cfg(feature = "hall-effect")]
+pub const DEFAULT_ADC_ANALYSIS_MODE: SensorMode =
+    SensorMode::LowLatency(&SILO_ATSAM4S_LC605_GAIN_4X);
+#[cfg(feature = "hall-effect")]
+pub const DEFAULT_ADC_CLOCK: AdcClock = AdcClock::Mhz30;
+
 pub const INVERT_STROBE: bool = true; // P-Mosfets need to be inverted
 pub const ISSI_DRIVER_CHANNELS: usize = 198;
 pub const ISSI_DRIVER_CHIPS: usize = 2;
 pub const ISSI_DRIVER_QUEUE_SIZE: usize = 5;
 pub const ISSI_DRIVER_CS_LAYOUT: [u8; ISSI_DRIVER_CHIPS] = [0, 1];
-// Must be 256 or less, or a power of 2; e.g. 512 due limitations with embedded-dma
-// Actual value should be -> ISSI_DRIVER_CHIPS * 198 (e.g. 396);
-// Size is determined by the largest SPI tx transaction
+pub const LED_MASK_SIZE: usize = 2; // Number of indicator LEDs used in the ISSI LED matrix
+                                    // Must be 256 or less, or a power of 2; e.g. 512 due limitations with embedded-dma
+                                    // Actual value should be -> ISSI_DRIVER_CHIPS * 198 (e.g. 396);
+                                    // Size is determined by the largest SPI tx transaction
 pub const SPI_TX_BUF_SIZE: usize = 512;
 // Size is determined by the largest SPI rx transaction
 pub const SPI_RX_BUF_SIZE: usize = (32 + 2) * ISSI_DRIVER_CHIPS;
@@ -69,6 +89,10 @@ pub const MAX_LAYER_STACK_CACHE: usize = 64;
 pub const MAX_LAYER_LOOKUP_SIZE: usize = 64;
 pub const MAX_OFF_STATE_LOOKUP: usize = 16;
 pub const STATE_SIZE: usize = 32;
+#[cfg(feature = "keyscanning")]
+pub const MAX_PER_KEY_EVENTS: usize = 1;
+#[cfg(feature = "hall-effect")]
+pub const MAX_PER_KEY_EVENTS: usize = 5;
 
 #[from_env]
 pub const VID: u16 = 0x1c11;

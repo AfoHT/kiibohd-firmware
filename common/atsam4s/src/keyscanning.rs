@@ -82,7 +82,10 @@ pub fn tc0_irq<
         // Scan one strobe (strobes have already been enabled and allowed to settle)
         if let Ok((reading, strobe)) = matrix.sense::<Infallible>() {
             for (i, entry) in reading.iter().enumerate() {
-                for event in entry.trigger_event(switch_remap[strobe * RSIZE + i] as usize, true) {
+                for event in entry.trigger_events::<MAX_PER_KEY_EVENTS>(
+                    switch_remap[strobe * RSIZE + i] as usize,
+                    true,
+                ) {
                     let hidio_event = HidIoEvent::TriggerEvent(event);
 
                     // Enqueue KLL trigger event

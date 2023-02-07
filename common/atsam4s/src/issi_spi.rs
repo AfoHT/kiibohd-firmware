@@ -33,6 +33,32 @@ pub type SpiParkedDma = (
     &'static mut [u32; SPI_TX_BUF_SIZE],
 );
 
+// ----- Structs -----
+
+/// Used to mask out LEDs that may be used for special purposes
+/// Commonly used for indicator LEDs that should not be affected by other frame processing
+pub struct LedMask {
+    pub chip: u8,
+    pub offset: u16,
+    pub mask: [u8; 3],
+}
+
+impl LedMask {
+    pub const fn new(chip: u8, offset: u16, mask: [u8; 3]) -> Self {
+        Self { chip, offset, mask }
+    }
+}
+
+impl Default for LedMask {
+    fn default() -> Self {
+        Self {
+            chip: 0,
+            offset: 0,
+            mask: [0, 0, 0],
+        }
+    }
+}
+
 // ----- Initialization Functions -----
 
 /// Initializes is31fl3743b LED driver
@@ -102,6 +128,9 @@ pub fn init(
     let (rx_len, tx_len) = issi.tx_function(spi_tx_buf).unwrap();
     let spi_rxtx = spi.read_write_len(spi_rx_buf, rx_len, spi_tx_buf, tx_len);
 
+    // Setup default per LED scaling
+    // TODO
+
     // LED Frame Timer
     let tcc1 = &mut tc0_chs.ch1;
     tcc1.clock_input(TCC1_DIV);
@@ -170,11 +199,12 @@ pub fn led_frame_process_manufacturing_tests_task(
 /// LED Frame Processing Task
 /// Handles each LED frame, triggered at a constant rate.
 /// Frames are skipped if the previous frame is still processing.
-pub fn led_frame_process_is31fl3743b_dma_task(
+pub fn led_frame_process_is31fl3743b_dma_task<const LED_MASK_SIZE: usize>(
     hidio_intf: &mut HidioCommandInterface,
     issi: &mut Is31fl3743bAtsam4Dma<ISSI_DRIVER_CHIPS, ISSI_DRIVER_QUEUE_SIZE>,
     spi_periph: &mut Option<SpiParkedDma>,
     spi_rxtx: &mut Option<SpiTransferRxTx>,
+    led_mask: &mut [LedMask; LED_MASK_SIZE],
     regular_processing: bool,
 ) {
     // Process incoming Pixel/LED Buffers
@@ -209,6 +239,16 @@ pub fn led_frame_process_is31fl3743b_dma_task(
             }
         }
     }
+
+    // Apply mask to frame buffer
+    // issi.pwm().unwrap() needs to be called to queue this change (usually handled by another
+    // timer interrupt)
+    for mask in led_mask.iter() {
+        for (i, ch) in mask.mask.iter().enumerate() {
+            issi.pwm_page_buf()[mask.chip as usize][mask.offset as usize + i] = *ch;
+        }
+    }
+    issi.pwm().unwrap(); // Queue pwm default
 
     // Enable SPI DMA to update frame
     // We only need to re-enable DMA if the queue was previously empty and "parked"

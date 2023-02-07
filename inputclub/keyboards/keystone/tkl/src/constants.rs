@@ -1,4 +1,4 @@
-// Copyright 2021-2022 Jacob Alexander
+// Copyright 2021-2023 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -12,8 +12,8 @@ use const_env::from_env;
 pub const CSIZE: usize = 18; // Number of columns
 pub const RSIZE: usize = 6; // Number of rows
 pub const MSIZE: usize = RSIZE * CSIZE; // Total matrix size
-                                        // Size of ADC buffer per strobe (plus 1 for the previous strobe's last sample)
-pub const ADC_BUF_SIZE: usize = kiibohd_atsam4s::constants::ADC_SAMPLES * RSIZE + 1;
+                                        // Size of ADC buffer per strobe
+pub const ADC_BUF_SIZE: usize = kiibohd_atsam4s::constants::ADC_SAMPLES * 2 * RSIZE;
 
 // Remap lookup
 // 0 mapped keys are ignored

@@ -1,4 +1,4 @@
-// Copyright 2021-2022 Jacob Alexander
+// Copyright 2021-2023 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -62,7 +62,9 @@ mod app {
             ISSI_DRIVER_QUEUE_SIZE,
         >,
         layer_state: LayerState,
+        led_lock_mask: [kiibohd_atsam4s::issi_spi::LedMask; LED_MASK_SIZE],
         led_test: kiibohd_atsam4s::LedTest,
+        manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         matrix: Matrix,
         spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
         spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
@@ -79,10 +81,8 @@ mod app {
         ctrl_producer: Producer<'static, kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE>,
         kbd_led_consumer: Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
-        manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: kiibohd_atsam4s::RealTimeTimer,
-        strobe_cycle: u32,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
         tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
         wdt: Watchdog,
@@ -124,7 +124,7 @@ mod app {
         let mut pins = Pins::new(gpio_ports, &cx.device.MATRIX);
 
         // Setup hall effect matrix
-        let (adc, matrix) = kiibohd_atsam4s::hall_effect::init::<CSIZE, MSIZE>(
+        let (adc, matrix) = kiibohd_atsam4s::hall_effect::init::<CSIZE, RSIZE, MSIZE>(
             cx.device.ADC,
             clocks.peripheral_clocks.adc.into_enabled_clock(),
             [
@@ -178,7 +178,7 @@ mod app {
         // ISSI + SPI Driver setup
         let issi_default_brightness = 255; // TODO compile-time configuration + flash default
         let issi_default_enable = true; // TODO compile-time configuration + flash default
-        let (spi_rxtx, issi) = kiibohd_atsam4s::issi_spi::init(
+        let (spi_rxtx, mut issi) = kiibohd_atsam4s::issi_spi::init(
             &mut pins.debug_led,
             issi_default_brightness,
             issi_default_enable,
@@ -191,6 +191,22 @@ mod app {
             cx.local.spi_tx_buf,
             &mut tc0_chs,
         );
+
+        for chip in issi.pwm_page_buf() {
+            chip.iter_mut().for_each(|e| *e = 255);
+        }
+        for chip in issi.scaling_page_buf() {
+            chip.iter_mut().for_each(|e| *e = 100);
+        }
+        issi.scaling().unwrap();
+        issi.pwm().unwrap();
+
+        // Set indicator LEDs
+        // TODO Move to constants
+        let led_lock_mask = [
+            kiibohd_atsam4s::issi_spi::LedMask::new(0, 33, [0, 0, 0]),
+            kiibohd_atsam4s::issi_spi::LedMask::new(0, 51, [0, 0, 0]),
+        ];
 
         // Setup USB + HID-IO interface
         let (
@@ -222,7 +238,8 @@ mod app {
         defmt::trace!("DwtSystick (Monotonic) started");
 
         // Manufacturing test data buffer
-        let manu_test_data = heapless::Vec::new();
+        // Ready for data and start from column 0
+        let manu_test_data = heapless::Vec::from_slice(&[0, 0]).unwrap();
 
         (
             Shared {
@@ -231,6 +248,8 @@ mod app {
                 issi,
                 layer_state,
                 led_test: kiibohd_atsam4s::LedTest::Disabled,
+                led_lock_mask,
+                manu_test_data,
                 matrix,
                 spi: None,
                 spi_rxtx: Some(spi_rxtx),
@@ -241,10 +260,8 @@ mod app {
                 ctrl_producer,
                 kbd_led_consumer,
                 kbd_producer,
-                manu_test_data,
                 mouse_producer,
                 rtt,
-                strobe_cycle: 0,
                 tcc0: tc0_chs.ch0,
                 tcc1: tc0_chs.ch1,
                 wdt,
@@ -297,12 +314,21 @@ mod app {
     #[task(priority = 1, binds = RTT, local = [
         rtt,
         wdt,
-    ], shared = [])]
+    ], shared = [
+        issi,
+        led_lock_mask,
+    ])]
     fn rtt(cx: rtt::Context) {
         cx.local.rtt.clear_interrupt_flags();
 
         // Feed watchdog
         cx.local.wdt.feed();
+
+        // Update lock LEDs
+        // TODO Move to issi_spi.rs
+        (cx.shared.issi, cx.shared.led_lock_mask).lock(|issi, led_lock_mask| {
+            issi.pwm().unwrap();
+        });
     }
 
     /// LED Frame Processing Task
@@ -311,13 +337,19 @@ mod app {
     #[task(priority = 8, shared = [
         hidio_intf,
         issi,
+        led_lock_mask,
         led_test,
         spi,
         spi_rxtx,
     ])]
     fn led_frame_process(cx: led_frame_process::Context) {
-        (cx.shared.hidio_intf, cx.shared.issi, cx.shared.led_test).lock(
-            |hidio_intf, issi, led_test| {
+        (
+            cx.shared.hidio_intf,
+            cx.shared.issi,
+            cx.shared.led_lock_mask,
+            cx.shared.led_test,
+        )
+            .lock(|hidio_intf, issi, led_lock_mask, led_test| {
                 // Look for manufacturing test commands
                 let (regular_processing, spawn_led_test) =
                     kiibohd_atsam4s::issi_spi::led_frame_process_manufacturing_tests_task(
@@ -337,11 +369,11 @@ mod app {
                         issi,
                         spi_periph,
                         spi_rxtx,
+                        led_lock_mask,
                         regular_processing,
                     );
                 });
-            },
-        );
+            });
     }
 
     /// LED Test Results
@@ -421,13 +453,11 @@ mod app {
     }
 
     /// ADC Interrupt
-    #[task(priority = 14, binds = ADC, local = [
-        manu_test_data,
-        strobe_cycle,
-    ], shared = [
+    #[task(priority = 14, binds = ADC, local = [], shared = [
         adc,
         hidio_intf,
         layer_state,
+        manu_test_data,
         matrix,
         usb_hid,
     ])]
@@ -435,25 +465,27 @@ mod app {
         let adc = cx.shared.adc;
         let hidio_intf = cx.shared.hidio_intf;
         let layer_state = cx.shared.layer_state;
-        let manu_test_data = cx.local.manu_test_data;
+        let manu_test_data = cx.shared.manu_test_data;
         let matrix = cx.shared.matrix;
 
-        (adc, hidio_intf, layer_state, matrix).lock(|adc_pdc, hidio_intf, layer_state, matrix| {
-            let strobe = kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
-                adc_pdc,
-                hidio_intf,
-                layer_state,
-                manu_test_data,
-                matrix,
-                cx.local.strobe_cycle,
-                SWITCH_REMAP,
-            );
+        (adc, hidio_intf, layer_state, manu_test_data, matrix).lock(
+            |adc_pdc, hidio_intf, layer_state, manu_test_data, matrix| {
+                let strobe =
+                    kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
+                        adc_pdc,
+                        hidio_intf,
+                        layer_state,
+                        manu_test_data,
+                        matrix,
+                        SWITCH_REMAP,
+                    );
 
-            // Process macros after full strobe cycle
-            if strobe == 0 && macro_process::spawn().is_err() {
-                defmt::warn!("Could not schedule macro_process");
-            }
-        });
+                // Process macros after full strobe cycle
+                if strobe == 0 && macro_process::spawn().is_err() {
+                    defmt::warn!("Could not schedule macro_process");
+                }
+            },
+        );
     }
 
     /// SPI Interrupt

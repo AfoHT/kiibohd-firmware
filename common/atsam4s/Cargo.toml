@@ -24,7 +24,7 @@ fugit = { version = "0.3", features = ["defmt"] }
 heapless = "0.7"
 is31fl3743b = { version = "0.1", optional = true }
 kiibohd-keyscanning = { version = "0.1", features = ["kll-core", "defmt"] }
-kiibohd-hall-effect-keyscanning = { version = "0.1", features = ["kll-core", "defmt"], optional = true }
+kiibohd-hall-effect-keyscanning = { version = "0.2", features = ["kll-core", "defmt"], optional = true }
 kiibohd-hid-io = { version = "0.1", features = ["defmt"] }
 kiibohd-usb = { version = "0.1", features = ["kll-core", "defmt"] }
 kll-core = { version = "0.1", default-features = false, features = ["defmt"] }
@@ -33,7 +33,7 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 paste = "1.0"
 
 [dependencies.atsam4-hal]
-version = "0.2.6"
+version = "0.3.1"
 default-features = false
 features = ["atsam4s8b", "usb"]
 

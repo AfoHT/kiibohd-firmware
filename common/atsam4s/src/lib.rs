@@ -328,11 +328,12 @@ pub fn macro_process_task<const CSIZE: usize, const MSIZE: usize, MATRIX>(
     layer_state: &mut LayerState,
     matrix: &mut MATRIX,
 ) where
-    MATRIX: kiibohd_keyscanning::KeyScanning,
+    MATRIX: kiibohd_keyscanning::KeyScanning<MAX_PER_KEY_EVENTS>,
 {
     // Confirm off-state lookups
-    layer_state
-        .process_off_state_lookups::<MAX_LAYER_LOOKUP_SIZE>(&|index| matrix.generate_event(index));
+    layer_state.process_off_state_lookups::<MAX_LAYER_LOOKUP_SIZE, MAX_PER_KEY_EVENTS>(&|index| {
+        matrix.generate_events(index)
+    });
 
     // Finalize triggers to generate CapabilityRun events
     for cap_run in layer_state.finalize_triggers::<MAX_LAYER_LOOKUP_SIZE>() {
@@ -372,7 +373,7 @@ pub fn macro_process_task<const CSIZE: usize, const MSIZE: usize, MATRIX>(
     layer_state.increment_time();
 }
 
-/// Sub-task of macro_process when handles HID LED events
+/// Sub-task of macro_process when handling HID LED events
 pub fn macro_process_led_events_task(
     kbd_led_consumer: &mut Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
     hidio_intf: &mut HidioCommandInterface,
@@ -392,6 +393,11 @@ pub fn macro_process_led_events_task(
             defmt::error!("Hidio TriggerEvent Error: {:?}", err);
         }
     }
+}
+
+/// Sub-task of macro_process when handing USB bus events
+pub fn macro_process_usb_events_task() {
+    // TODO
 }
 
 /// USB Outgoing Events Task

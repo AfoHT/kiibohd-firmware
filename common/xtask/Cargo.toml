@@ -6,7 +6,7 @@ version = "0.0.0"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-anyhow = "1.0.66"
+anyhow = "1.0.71"
 duct = "0.13.6"
-probe-rs = "0.13.0"
-probe-rs-cli-util = "0.13.0"
+probe-rs = "0.18.0"
+probe-rs-cli-util = "0.18.0"
