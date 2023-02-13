@@ -50,13 +50,13 @@ args = ["deny", "check", "licenses"]
 
 [tasks.flash]
 command = "dfu-util"
-args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin", "--reset"]
+args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-debug.dfu.bin"]
 dependencies = ["bin-dfu"]
 ignore_errors = true
 
 [tasks.flash-release]
 command = "dfu-util"
-args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin", "--reset"]
+args = ["--alt", "0", "-w", "--download", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin"]
 dependencies = ["bin-dfu-release"]
 ignore_errors = true
 
