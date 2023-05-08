@@ -206,7 +206,20 @@ pub fn led_frame_process_is31fl3743b_dma_task<const LED_MASK_SIZE: usize>(
     spi_rxtx: &mut Option<SpiTransferRxTx>,
     led_mask: &mut [LedMask; LED_MASK_SIZE],
     regular_processing: bool,
+    usb_state_consumer: &mut Consumer<'static, UsbState, USB_STATE_QUEUE_SIZE>,
 ) {
+    // Check for suspend/resume events
+    while let Some(state) = usb_state_consumer.dequeue() {
+        match state {
+            UsbState::Suspend => {
+                issi.disable().unwrap();
+            }
+            UsbState::Resume => {
+                issi.enable().unwrap();
+            }
+        }
+    }
+
     // Process incoming Pixel/LED Buffers
     if regular_processing {
         let control = hidio_intf.interface().led_control.control;

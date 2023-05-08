@@ -75,6 +75,7 @@ pub const CTRL_QUEUE_SIZE: usize = 5;
 pub const KBD_QUEUE_SIZE: usize = 25;
 pub const KBD_LED_QUEUE_SIZE: usize = 3;
 pub const MOUSE_QUEUE_SIZE: usize = 10;
+pub const USB_STATE_QUEUE_SIZE: usize = 2;
 
 // Keyscanning Constants
 pub const DEBOUNCE_US: u32 = 5000; // 5 ms TODO Tuning
