@@ -41,11 +41,12 @@ pub struct LedMask {
     pub chip: u8,
     pub offset: u16,
     pub mask: [u8; 3],
+    pub frames_since_update: u8,
 }
 
 impl LedMask {
     pub const fn new(chip: u8, offset: u16, mask: [u8; 3]) -> Self {
-        Self { chip, offset, mask }
+        Self { chip, offset, mask, frames_since_update: 0 }
     }
 }
 
@@ -55,6 +56,7 @@ impl Default for LedMask {
             chip: 0,
             offset: 0,
             mask: [0, 0, 0],
+            frames_since_update: 0,
         }
     }
 }
@@ -256,10 +258,13 @@ pub fn led_frame_process_is31fl3743b_dma_task<const LED_MASK_SIZE: usize>(
     // Apply mask to frame buffer
     // issi.pwm().unwrap() needs to be called to queue this change (usually handled by another
     // timer interrupt)
-    for mask in led_mask.iter() {
+    for mask in led_mask.iter_mut() {
         for (i, ch) in mask.mask.iter().enumerate() {
-            issi.pwm_page_buf()[mask.chip as usize][mask.offset as usize + i] = *ch;
+            let mut val = *ch;
+            val = val.saturating_sub(mask.frames_since_update);
+            issi.pwm_page_buf()[mask.chip as usize][mask.offset as usize + i] = val;
         }
+        mask.frames_since_update = mask.frames_since_update.saturating_add(1);
     }
     issi.pwm().unwrap(); // Queue pwm default
 

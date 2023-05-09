@@ -123,6 +123,26 @@ type TimerCounterChannels = hal::timer::TimerCounterChannels<
 >;
 pub type UsbDevice = usb_device::device::UsbDevice<'static, UdpBus>;
 
+// ----- Structs -----
+
+pub struct IndicatorLeds<const NUM_LEDS: usize> {
+    leds: [bool; NUM_LEDS],
+}
+
+impl<const NUM_LEDS: usize> IndicatorLeds<NUM_LEDS> {
+    pub fn new() -> Self {
+        Self { leds: [false; NUM_LEDS] }
+    }
+
+    pub fn set(&mut self, index: usize, state: bool) {
+        self.leds[index] = state;
+    }
+
+    pub fn get(&self, index: usize) -> bool {
+        self.leds[index]
+    }
+}
+
 // ----- Initialization Functions -----
 
 /// Check user signature (up to 512-bytes of data)

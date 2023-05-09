@@ -81,6 +81,7 @@ mod app {
         ctrl_producer: Producer<'static, kiibohd_usb::CtrlState, CTRL_QUEUE_SIZE>,
         kbd_led_consumer: Consumer<'static, kiibohd_usb::LedState, KBD_LED_QUEUE_SIZE>,
         kbd_producer: Producer<'static, kiibohd_usb::KeyState, KBD_QUEUE_SIZE>,
+        led_indicators: kiibohd_atsam4s::IndicatorLeds<LED_MASK_SIZE>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: kiibohd_atsam4s::RealTimeTimer,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
@@ -211,6 +212,7 @@ mod app {
             kiibohd_atsam4s::issi_spi::LedMask::new(0, 33, [0, 0, 0]),
             kiibohd_atsam4s::issi_spi::LedMask::new(0, 51, [0, 0, 0]),
         ];
+        let led_indicators = kiibohd_atsam4s::IndicatorLeds::new();
 
         // Setup USB + HID-IO interface
         let (usb_state_producer, usb_state_consumer) = cx.local.usb_state_queue.split();
@@ -266,6 +268,7 @@ mod app {
                 ctrl_producer,
                 kbd_led_consumer,
                 kbd_producer,
+                led_indicators,
                 mouse_producer,
                 rtt,
                 tcc0: tc0_chs.ch0,
@@ -321,6 +324,7 @@ mod app {
     /// Activity tick
     /// Used visually determine MCU status
     #[task(priority = 1, binds = RTT, local = [
+        led_indicators,
         rtt,
         wdt,
     ], shared = [
@@ -333,9 +337,26 @@ mod app {
         // Feed watchdog
         cx.local.wdt.feed();
 
+        // Update activity LED
+        let status = cx.local.led_indicators.get(0);
+        cx.local.led_indicators.set(0, !status);
+
         // Update lock LEDs
         // TODO Move to issi_spi.rs
+        // TODO Add way to register state indicators
+        //      LED 0
+        //       - NumLock, CapsLock, ScrollLock
+        //      LED 1
+        //       - NKRO/6KRO, HIDIO, LowLatency/Normal/Test
+        // TODO Better breathing effect (will need timing from tc1 and rtt to compute this)
         (cx.shared.issi, cx.shared.led_lock_mask).lock(|issi, led_lock_mask| {
+            if status {
+                led_lock_mask[0].mask = [0, 0, 0];
+            } else {
+                led_lock_mask[0].mask = [0, 50, 0];
+            }
+            led_lock_mask[0].frames_since_update = 0;
+
             issi.pwm().unwrap();
         });
     }
