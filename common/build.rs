@@ -101,7 +101,7 @@ fn main() {
 
     // Retrieve layouts
     let layouts_path = PathBuf::from(env::var_os("TOP_LEVEL").unwrap()).join("common/layouts");
-    let layouts = Layouts::from_dir(layouts_path);
+    let mut layouts = Layouts::from_dir(layouts_path);
 
     // TODO Handle layers
     //      Figure out how to merge files
@@ -111,5 +111,5 @@ fn main() {
     // Verify and generate rust
     kll_compiler::emitters::kllcore::verify(&groups).unwrap();
     let outfile = out.join("generated_kll.rs");
-    kll_compiler::emitters::kllcore::write(&outfile, &groups, layouts);
+    kll_compiler::emitters::kllcore::write(&outfile, &groups, &mut layouts);
 }
