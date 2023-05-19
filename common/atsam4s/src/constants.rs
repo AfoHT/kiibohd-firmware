@@ -94,6 +94,8 @@ pub const STATE_SIZE: usize = 32;
 pub const MAX_PER_KEY_EVENTS: usize = 1;
 #[cfg(feature = "hall-effect")]
 pub const MAX_PER_KEY_EVENTS: usize = 5;
+#[cfg(not(any(feature = "keyscanning", feature = "hall-effect")))]
+pub const MAX_PER_KEY_EVENTS: usize = 1;
 
 #[from_env]
 pub const VID: u16 = 0x1c11;
