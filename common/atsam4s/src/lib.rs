@@ -131,7 +131,9 @@ pub struct IndicatorLeds<const NUM_LEDS: usize> {
 
 impl<const NUM_LEDS: usize> IndicatorLeds<NUM_LEDS> {
     pub fn new() -> Self {
-        Self { leds: [false; NUM_LEDS] }
+        Self {
+            leds: [false; NUM_LEDS],
+        }
     }
 
     pub fn set(&mut self, index: usize, state: bool) {
@@ -140,6 +142,12 @@ impl<const NUM_LEDS: usize> IndicatorLeds<NUM_LEDS> {
 
     pub fn get(&self, index: usize) -> bool {
         self.leds[index]
+    }
+}
+
+impl<const NUM_LEDS: usize> Default for IndicatorLeds<NUM_LEDS> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

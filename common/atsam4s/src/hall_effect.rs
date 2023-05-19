@@ -95,7 +95,7 @@ pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
 
     // Interleave channel 11 (which is always disconnected) with the other channels to prevent ADC
     // cross-talk between channels.
-    adc.sequence(&mut [0, 11, 1, 11, 2, 11, 3, 11, 8, 11, 9, 11]);
+    adc.sequence(&[0, 11, 1, 11, 2, 11, 3, 11, 8, 11, 9, 11]);
     adc.enable_sequencing();
 
     // Enable ADC tags (used to identify which channel the data is from; easier to debug channels)
@@ -130,6 +130,7 @@ pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
 }
 
 /// Configures ADC + timer according to the analysis mode and sample rate
+#[allow(clippy::too_many_arguments)]
 pub fn set_analysis_mode<const RSIZE: usize>(
     mode: SensorMode,
     adc_clock: AdcClock,

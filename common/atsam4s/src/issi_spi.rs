@@ -37,6 +37,7 @@ pub type SpiParkedDma = (
 
 /// Used to mask out LEDs that may be used for special purposes
 /// Commonly used for indicator LEDs that should not be affected by other frame processing
+#[derive(Default)]
 pub struct LedMask {
     pub chip: u8,
     pub offset: u16,
@@ -46,16 +47,10 @@ pub struct LedMask {
 
 impl LedMask {
     pub const fn new(chip: u8, offset: u16, mask: [u8; 3]) -> Self {
-        Self { chip, offset, mask, frames_since_update: 0 }
-    }
-}
-
-impl Default for LedMask {
-    fn default() -> Self {
         Self {
-            chip: 0,
-            offset: 0,
-            mask: [0, 0, 0],
+            chip,
+            offset,
+            mask,
             frames_since_update: 0,
         }
     }
