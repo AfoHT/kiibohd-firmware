@@ -18,7 +18,6 @@ cortex-m = "0.7"
 cortex-m-rt = { version = "0.7" }
 defmt = "0.3"
 defmt-rtt = "0.3"
-dwt-systick-monotonic = "1.1"
 embedded-hal = "0.2.7"
 fugit = { version = "0.3", features = ["defmt"] }
 heapless = "0.7"

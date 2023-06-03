@@ -32,7 +32,7 @@ use crate::constants::*;
 use crate::hidio::*;
 use core::fmt::Write;
 use cortex_m_rt::exception;
-use dwt_systick_monotonic::*;
+use fugit::ExtU32;
 use hal::{
     chipid::ChipId,
     clock::{ClockController, Disabled, Enabled, Tc0Clock, Tc1Clock, Tc2Clock},

@@ -1,4 +1,4 @@
-// Copyright 2021-2022 Jacob Alexander
+// Copyright 2021-2023 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -7,6 +7,30 @@
 
 #![no_std]
 #![no_main]
+#![feature(type_alias_impl_trait)]
+
+use crate::constants::*;
+use kiibohd_atsam4s::{
+    self,
+    constants::*,
+    hal::{
+        clock::{Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock},
+        gpio::*,
+        pac::TC0,
+        prelude::*,
+        timer::TimerCounterChannel,
+        udp::{usb_device::bus::UsbBusAllocator, usb_device::device::UsbDeviceState, UdpBus},
+        watchdog::Watchdog,
+        ToggleableOutputPin,
+    },
+    heapless::{
+        spsc::{Consumer, Producer, Queue},
+        String,
+    },
+    kiibohd_usb, LayerState, UsbState,
+};
+use kira96::{kll, Pins};
+use rtic_monotonics::systick::*;
 
 mod constants;
 
@@ -17,36 +41,12 @@ mod constants;
 // software tasks.
 #[rtic::app(device = kiibohd_atsam4s::hal::pac, peripherals = true, dispatchers = [UART1, USART0, USART1, SSC, PWM, ACC, ADC, SPI])]
 mod app {
-    use crate::constants::*;
-    use dwt_systick_monotonic::*;
-    use kiibohd_atsam4s::{
-        self,
-        constants::*,
-        hal::{
-            clock::{Enabled, MainClock, SlowClock, Tc0Clock, Tc1Clock},
-            gpio::*,
-            pac::TC0,
-            prelude::*,
-            timer::TimerCounterChannel,
-            udp::{usb_device::bus::UsbBusAllocator, usb_device::device::UsbDeviceState, UdpBus},
-            watchdog::Watchdog,
-            ToggleableOutputPin,
-        },
-        heapless::{
-            spsc::{Consumer, Producer, Queue},
-            String,
-        },
-        kiibohd_usb, LayerState, UsbState,
-    };
-    use kira96::{kll, Pins};
+    use super::*;
 
     // ----- Types -----
 
     type LayerLookup = kiibohd_atsam4s::kll_core::layout::LayerLookup<'static, LAYOUT_SIZE>;
     type Matrix = kiibohd_atsam4s::keyscanning::KeyMatrix<CSIZE, RSIZE, MSIZE, SCAN_PERIOD_US>;
-
-    #[monotonic(binds = SysTick, default = true)]
-    type DwtMono = DwtSystick<MCU_FREQ>;
 
     // ----- Structs -----
 
@@ -95,7 +95,7 @@ mod app {
             serial_number: String<126> = String::new(),
             usb_bus: Option<UsbBusAllocator<UdpBus>> = None,
     ])]
-    fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn init(cx: init::Context) -> (Shared, Local) {
         let (wdt, clocks, chip, mut tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
             cx.device.CHIPID,
             cx.device.EFC0,
@@ -199,8 +199,9 @@ mod app {
         tcc1.enable_interrupt();
 
         // Initialize tickless monotonic timer
-        let mono = DwtSystick::new(&mut cx.core.DCB, cx.core.DWT, cx.core.SYST, MCU_FREQ);
-        defmt::trace!("DwtSystick (Monotonic) started");
+        let mono_token = rtic_monotonics::create_systick_token!();
+        Systick::start(cx.core.SYST, MCU_FREQ, mono_token);
+        defmt::trace!("Systick (Monotonic) started");
 
         // Manufacturing test data buffer
         (
@@ -225,7 +226,6 @@ mod app {
                 usb_state_producer,
                 wdt,
             },
-            init::Monotonics(mono),
         )
     }
 
@@ -305,7 +305,7 @@ mod app {
     #[task(priority = 8, shared = [
         hidio_intf,
     ])]
-    fn led_frame_process(mut cx: led_frame_process::Context) {
+    async fn led_frame_process(mut cx: led_frame_process::Context) {
         cx.shared.hidio_intf.lock(|_hidio_intf| {
             // TODO
         });
@@ -330,7 +330,7 @@ mod app {
         layer_state,
         matrix,
     ])]
-    fn macro_process(mut cx: macro_process::Context) {
+    async fn macro_process(mut cx: macro_process::Context) {
         (cx.shared.layer_state, cx.shared.matrix).lock(|layer_state, matrix| {
             // Query HID LED Events
             cx.shared.hidio_intf.lock(|hidio_intf| {
@@ -367,7 +367,7 @@ mod app {
         usb_dev,
         usb_hid,
     ])]
-    fn usb_process(cx: usb_process::Context) {
+    async fn usb_process(cx: usb_process::Context) {
         let usb_dev = cx.shared.usb_dev;
         let usb_hid = cx.shared.usb_hid;
         (usb_hid, usb_dev).lock(|usb_hid, usb_dev| {
