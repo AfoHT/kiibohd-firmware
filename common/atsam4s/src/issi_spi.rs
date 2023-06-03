@@ -1,4 +1,4 @@
-// Copyright 2021-2022 Jacob Alexander
+// Copyright 2021-2023 Jacob Alexander
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -12,8 +12,11 @@ pub use is31fl3743b::Is31fl3743bAtsam4Dma;
 use core::convert::Infallible;
 use fugit::{HertzU32 as Hertz, RateExtU32};
 use hal::{
+    clock::{Enabled, Tc1Clock},
+    pac::TC0,
     pdc::{ReadWriteDmaLen, RxTxDma, Transfer, W},
     spi::{SpiMaster, SpiPayload, Variable},
+    timer::TimerCounterChannel,
     OutputPin,
 };
 
@@ -32,6 +35,7 @@ pub type SpiParkedDma = (
     &'static mut [u32; SPI_RX_BUF_SIZE],
     &'static mut [u32; SPI_TX_BUF_SIZE],
 );
+pub type TCC1 = TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>;
 
 // ----- Structs -----
 
@@ -71,7 +75,7 @@ pub fn init(
     spi_rx_buf: &'static mut [u32; SPI_RX_BUF_SIZE],
     spi_sck: Pa14<PfA>,
     spi_tx_buf: &'static mut [u32; SPI_TX_BUF_SIZE],
-    tc0_chs: &mut TimerCounterChannels,
+    tcc1: &mut TCC1,
 ) -> (
     SpiTransferRxTx,
     Is31fl3743bAtsam4Dma<ISSI_DRIVER_CHIPS, ISSI_DRIVER_QUEUE_SIZE>,
@@ -129,7 +133,6 @@ pub fn init(
     // TODO
 
     // LED Frame Timer
-    let tcc1 = &mut tc0_chs.ch1;
     tcc1.clock_input(TCC1_DIV);
     tcc1.start(17_u32.millis()); // 17 ms -> ~60 fps (16.6667 ms)
     defmt::trace!("TCC1 started - LED Frame Scheduling");

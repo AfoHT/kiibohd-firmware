@@ -66,8 +66,10 @@ mod app {
         led_test: kiibohd_atsam4s::LedTest,
         manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         matrix: Matrix,
+        sensor_mode: Option<kiibohd_atsam4s::hall_effect::SensorMode>,
         spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
         spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
+        tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
         usb_dev: kiibohd_atsam4s::UsbDevice,
         usb_hid: kiibohd_atsam4s::HidInterface,
     }
@@ -84,7 +86,7 @@ mod app {
         led_indicators: kiibohd_atsam4s::IndicatorLeds<LED_MASK_SIZE>,
         mouse_producer: Producer<'static, kiibohd_usb::MouseState, MOUSE_QUEUE_SIZE>,
         rtt: kiibohd_atsam4s::RealTimeTimer,
-        tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
+        sense_pins: kiibohd_atsam4s::hall_effect::SensePins,
         tcc1: TimerCounterChannel<TC0, Tc1Clock<Enabled>, 1, TCC1_FREQ>,
         usb_state: UsbDeviceState,
         usb_state_consumer: Consumer<'static, kiibohd_atsam4s::UsbState, USB_STATE_QUEUE_SIZE>,
@@ -109,7 +111,7 @@ mod app {
             usb_bus: Option<UsbBusAllocator<UdpBus>> = None,
     ])]
     fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        let (wdt, mut clocks, chip, mut tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
+        let (wdt, mut clocks, chip, tc0_chs, rtt, gpio_ports) = kiibohd_atsam4s::initial_init(
             cx.device.CHIPID,
             cx.device.EFC0,
             cx.device.PIOA,
@@ -127,8 +129,17 @@ mod app {
 
         // Setup pins
         let mut pins = Pins::new(gpio_ports, &cx.device.MATRIX);
+        let mut sense_pins = kiibohd_atsam4s::hall_effect::SensePins {
+            sense1: pins.sense1,
+            sense2: pins.sense2,
+            sense3: pins.sense3,
+            sense4: pins.sense4,
+            sense5: pins.sense5,
+            sense6: pins.sense6,
+        };
 
         // Setup hall effect matrix
+        let mut tcc0 = tc0_chs.ch0;
         let (adc, matrix) = kiibohd_atsam4s::hall_effect::init::<CSIZE, RSIZE, MSIZE>(
             cx.device.ADC,
             clocks.peripheral_clocks.adc.into_enabled_clock(),
@@ -156,13 +167,8 @@ mod app {
                 pins.strobe21.downgrade(),
                 pins.strobe22.downgrade(),
             ],
-            &mut pins.sense1,
-            &mut pins.sense2,
-            &mut pins.sense3,
-            &mut pins.sense4,
-            &mut pins.sense5,
-            &mut pins.sense6,
-            &mut tc0_chs,
+            &mut sense_pins,
+            &mut tcc0,
         );
 
         // Setup kll-core
@@ -183,6 +189,7 @@ mod app {
         // ISSI + SPI Driver setup
         let issi_default_brightness = 255; // TODO compile-time configuration + flash default
         let issi_default_enable = true; // TODO compile-time configuration + flash default
+        let mut tcc1 = tc0_chs.ch1;
         let (spi_rxtx, mut issi) = kiibohd_atsam4s::issi_spi::init(
             &mut pins.debug_led,
             issi_default_brightness,
@@ -194,7 +201,7 @@ mod app {
             cx.local.spi_rx_buf,
             pins.spi_sck,
             cx.local.spi_tx_buf,
-            &mut tc0_chs,
+            &mut tcc1,
         );
 
         for chip in issi.pwm_page_buf() {
@@ -259,8 +266,10 @@ mod app {
                 led_lock_mask,
                 manu_test_data,
                 matrix,
+                sensor_mode: None,
                 spi: None,
                 spi_rxtx: Some(spi_rxtx),
+                tcc0,
                 usb_dev,
                 usb_hid,
             },
@@ -271,8 +280,8 @@ mod app {
                 led_indicators,
                 mouse_producer,
                 rtt,
-                tcc0: tc0_chs.ch0,
-                tcc1: tc0_chs.ch1,
+                sense_pins,
+                tcc1,
                 usb_state,
                 usb_state_consumer,
                 usb_state_producer,
@@ -288,14 +297,14 @@ mod app {
     ///   key states
     ///   Scans one strobe at a time
     #[task(priority = 13, binds = TC0, local = [
-        tcc0,
     ], shared = [
         adc,
+        tcc0,
     ])]
-    fn tc0(mut cx: tc0::Context) {
+    fn tc0(cx: tc0::Context) {
         // Check for keyscanning interrupt (tcc0)
-        cx.shared.adc.lock(|adc| {
-            if cx.local.tcc0.clear_interrupt_flags() {
+        (cx.shared.adc, cx.shared.tcc0).lock(|adc, tcc0| {
+            if tcc0.clear_interrupt_flags() {
                 // Start next ADC DMA buffer read
                 if let Some(adc) = adc {
                     adc.resume();
@@ -494,13 +503,16 @@ mod app {
     }
 
     /// ADC Interrupt
-    #[task(priority = 14, binds = ADC, local = [], shared = [
+    #[task(priority = 14, binds = ADC, local = [
+        sense_pins,
+    ], shared = [
         adc,
         hidio_intf,
         layer_state,
         manu_test_data,
         matrix,
-        usb_hid,
+        sensor_mode,
+        tcc0,
     ])]
     fn adc(cx: adc::Context) {
         let adc = cx.shared.adc;
@@ -508,12 +520,18 @@ mod app {
         let layer_state = cx.shared.layer_state;
         let manu_test_data = cx.shared.manu_test_data;
         let matrix = cx.shared.matrix;
+        let sense_pins = cx.local.sense_pins;
+        let sensor_mode = cx.shared.sensor_mode;
+        let tcc0 = cx.shared.tcc0;
 
-        (adc, hidio_intf, layer_state, manu_test_data, matrix).lock(
-            |adc_pdc, hidio_intf, layer_state, manu_test_data, matrix| {
+        (adc, hidio_intf, layer_state, manu_test_data, matrix, sensor_mode, tcc0).lock(
+            |adc_pdc, hidio_intf, layer_state, manu_test_data, matrix, sensor_mode, tcc0| {
                 let strobe =
                     kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
                         adc_pdc,
+                        sense_pins,
+                        *sensor_mode,
+                        tcc0,
                         hidio_intf,
                         layer_state,
                         manu_test_data,

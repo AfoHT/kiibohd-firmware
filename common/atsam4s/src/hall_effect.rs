@@ -17,7 +17,10 @@ use hal::{
         Adc, AdcPayload, SettlingTime, SingleEndedGain, SingleSequence, StartupTime, TrackingTime,
         TransferTime,
     },
+    clock::{Enabled, Tc0Clock},
+    pac::TC0,
     pdc::{ReadDmaPaused, RxDma, Transfer, W},
+    timer::TimerCounterChannel,
 };
 
 // ----- Types -----
@@ -26,6 +29,7 @@ pub type AdcTransfer<const ADC_BUF_SIZE: usize> =
     Transfer<W, &'static mut [u16; ADC_BUF_SIZE], RxDma<AdcPayload<SingleSequence>>>;
 pub type HallMatrix<const CSIZE: usize, const MSIZE: usize> =
     Matrix<PioX<Output<PushPull>>, CSIZE, MSIZE, INVERT_STROBE>;
+pub type TCC0 = TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>;
 
 // ----- Enums -----
 
@@ -43,22 +47,30 @@ pub enum AdcClock {
     Mhz30,
 }
 
+// ----- Structs -----
+
+/// Container struct so it's easier to pass the sense pins around
+/// Due to how the pin types are constructed it's currently not
+/// possible to use an array like the strobe pins.
+pub struct SensePins {
+    pub sense1: Pa17<ExFn>,
+    pub sense2: Pa18<ExFn>,
+    pub sense3: Pa19<ExFn>,
+    pub sense4: Pa20<ExFn>,
+    pub sense5: Pa21<ExFn>,
+    pub sense6: Pa22<ExFn>,
+}
+
 // ----- Initialization Functions -----
 
 /// Initialize Hall Effect Matrix
 /// Sets up ADC and GPIO pins
-#[allow(clippy::too_many_arguments)]
 pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
     adc: hal::pac::ADC,
     adc_clock: hal::clock::AdcClock<Enabled>,
     cols: [PioX<Output<PushPull>>; CSIZE],
-    sense1: &mut Pa17<ExFn>,
-    sense2: &mut Pa18<ExFn>,
-    sense3: &mut Pa19<ExFn>,
-    sense4: &mut Pa20<ExFn>,
-    sense5: &mut Pa21<ExFn>,
-    sense6: &mut Pa22<ExFn>,
-    tc0_chs: &mut TimerCounterChannels,
+    sense_pins: &mut SensePins,
+    tcc0: &mut TCC0,
 ) -> (
     hal::adc::AdcDma<hal::adc::SingleSequence>,
     HallMatrix<CSIZE, MSIZE>,
@@ -78,12 +90,12 @@ pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
     defmt::trace!("ADC initialization");
     let mut adc = Adc::new(adc, adc_clock);
 
-    adc.enable_channel(sense1);
-    adc.enable_channel(sense2);
-    adc.enable_channel(sense3);
-    adc.enable_channel(sense4);
-    adc.enable_channel(sense5);
-    adc.enable_channel(sense6);
+    adc.enable_channel(&mut sense_pins.sense1);
+    adc.enable_channel(&mut sense_pins.sense2);
+    adc.enable_channel(&mut sense_pins.sense3);
+    adc.enable_channel(&mut sense_pins.sense4);
+    adc.enable_channel(&mut sense_pins.sense5);
+    adc.enable_channel(&mut sense_pins.sense6);
 
     // Enabling all channels from 0 to 11 so we can use an 11 channel sequence
     // This also takes care of sense1 to sense6
@@ -102,20 +114,15 @@ pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
     adc.enable_tags();
 
     // Keyscanning Timer
-    tc0_chs.ch0.clock_input(TCC0_DIV);
+    tcc0.clock_input(TCC0_DIV);
 
     // Setup default analysis mode
     let mut adc = set_analysis_mode::<RSIZE>(
         DEFAULT_ADC_ANALYSIS_MODE,
         DEFAULT_ADC_CLOCK,
         adc,
-        tc0_chs,
-        sense1,
-        sense2,
-        sense3,
-        sense4,
-        sense5,
-        sense6,
+        tcc0,
+        sense_pins,
     );
 
     // Finalize ADC setup
@@ -124,24 +131,18 @@ pub fn init<const CSIZE: usize, const RSIZE: usize, const MSIZE: usize>(
 
     // Finalize timer setup
     defmt::trace!("TCC0 started - Keyscanning");
-    tc0_chs.ch0.enable_interrupt();
+    tcc0.enable_interrupt();
 
     (adc, matrix)
 }
 
 /// Configures ADC + timer according to the analysis mode and sample rate
-#[allow(clippy::too_many_arguments)]
 pub fn set_analysis_mode<const RSIZE: usize>(
     mode: SensorMode,
     adc_clock: AdcClock,
     adc: hal::adc::Adc,
-    tc0_chs: &mut TimerCounterChannels,
-    sense1: &mut Pa17<ExFn>,
-    sense2: &mut Pa18<ExFn>,
-    sense3: &mut Pa19<ExFn>,
-    sense4: &mut Pa20<ExFn>,
-    sense5: &mut Pa21<ExFn>,
-    sense6: &mut Pa22<ExFn>,
+    tcc0: &mut TCC0,
+    sense_pins: &mut SensePins,
 ) -> hal::adc::Adc {
     // Set ADC timing
     let mut adc = match adc_clock {
@@ -190,26 +191,26 @@ pub fn set_analysis_mode<const RSIZE: usize>(
     };
 
     // Gain
-    adc.gain(sense1, gain);
-    adc.gain(sense2, gain);
-    adc.gain(sense3, gain);
-    adc.gain(sense4, gain);
-    adc.gain(sense5, gain);
-    adc.gain(sense6, gain);
+    adc.gain(&mut sense_pins.sense1, gain);
+    adc.gain(&mut sense_pins.sense2, gain);
+    adc.gain(&mut sense_pins.sense3, gain);
+    adc.gain(&mut sense_pins.sense4, gain);
+    adc.gain(&mut sense_pins.sense5, gain);
+    adc.gain(&mut sense_pins.sense6, gain);
 
     // Offset
-    adc.offset(sense1, offset);
-    adc.offset(sense2, offset);
-    adc.offset(sense3, offset);
-    adc.offset(sense4, offset);
-    adc.offset(sense5, offset);
-    adc.offset(sense6, offset);
+    adc.offset(&mut sense_pins.sense1, offset);
+    adc.offset(&mut sense_pins.sense2, offset);
+    adc.offset(&mut sense_pins.sense3, offset);
+    adc.offset(&mut sense_pins.sense4, offset);
+    adc.offset(&mut sense_pins.sense5, offset);
+    adc.offset(&mut sense_pins.sense6, offset);
 
     // Autocalibration is needed after gain/offset setting changes
     adc.autocalibration(true);
 
     // Setup timer
-    tc0_chs.ch0.start(timing);
+    tcc0.start(timing);
 
     adc
 }
@@ -315,6 +316,7 @@ fn adc_30mhz(mut adc: hal::adc::Adc) -> hal::adc::Adc {
 
 /// ADC Interrupt
 /// Returns the current strobe index, this will wrap-around to 0 after the last strobe
+#[allow(clippy::too_many_arguments)]
 pub fn adc_irq<
     const CSIZE: usize,
     const RSIZE: usize,
@@ -322,6 +324,9 @@ pub fn adc_irq<
     const ADC_BUF_SIZE: usize,
 >(
     adc_pdc: &mut Option<AdcTransfer<ADC_BUF_SIZE>>,
+    sense_pins: &mut SensePins,
+    mut sensor_mode: Option<SensorMode>,
+    tcc0: &mut TCC0,
     hidio_intf: &mut HidioCommandInterface,
     layer_state: &mut LayerState,
     manu_test_data: &mut heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
@@ -445,6 +450,20 @@ pub fn adc_irq<
             }
         }
     }
+
+    // Change sensor mode
+    let adc = if sensor_mode.is_some() {
+        set_analysis_mode::<RSIZE>(
+            sensor_mode.take().unwrap(),
+            DEFAULT_ADC_CLOCK,
+            adc.revert(),
+            tcc0,
+            sense_pins,
+        )
+        .with_pdc()
+    } else {
+        adc
+    };
 
     // Prepare next DMA read, but don't start it yet
     adc_pdc.replace(adc.read_paused(buf));
