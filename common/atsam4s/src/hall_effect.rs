@@ -325,7 +325,6 @@ pub fn adc_irq<
 >(
     adc_pdc: &mut Option<AdcTransfer<ADC_BUF_SIZE>>,
     sense_pins: &mut SensePins,
-    mut sensor_mode: Option<SensorMode>,
     tcc0: &mut TCC0,
     hidio_intf: &mut HidioCommandInterface,
     layer_state: &mut LayerState,
@@ -452,9 +451,19 @@ pub fn adc_irq<
     }
 
     // Change sensor mode
-    let adc = if sensor_mode.is_some() {
+    let adc = if hidio_intf
+        .mut_interface()
+        .manufacturing_config
+        .hall_effect_mode_switch
+        .is_some()
+    {
         set_analysis_mode::<RSIZE>(
-            sensor_mode.take().unwrap(),
+            hidio_intf
+                .mut_interface()
+                .manufacturing_config
+                .hall_effect_mode_switch
+                .take()
+                .unwrap(),
             DEFAULT_ADC_CLOCK,
             adc.revert(),
             tcc0,

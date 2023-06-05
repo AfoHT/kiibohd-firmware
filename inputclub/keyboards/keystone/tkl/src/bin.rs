@@ -66,7 +66,6 @@ mod app {
         led_test: kiibohd_atsam4s::LedTest,
         manu_test_data: heapless::Vec<u8, { kiibohd_hid_io::MESSAGE_LEN - 4 }>,
         matrix: Matrix,
-        sensor_mode: Option<kiibohd_atsam4s::hall_effect::SensorMode>,
         spi: Option<kiibohd_atsam4s::issi_spi::SpiParkedDma>,
         spi_rxtx: Option<kiibohd_atsam4s::issi_spi::SpiTransferRxTx>,
         tcc0: TimerCounterChannel<TC0, Tc0Clock<Enabled>, 0, TCC0_FREQ>,
@@ -263,7 +262,6 @@ mod app {
                 led_lock_mask,
                 manu_test_data,
                 matrix,
-                sensor_mode: None,
                 spi: None,
                 spi_rxtx: Some(spi_rxtx),
                 tcc0,
@@ -508,7 +506,6 @@ mod app {
         layer_state,
         manu_test_data,
         matrix,
-        sensor_mode,
         tcc0,
     ])]
     fn adc(cx: adc::Context) {
@@ -518,39 +515,28 @@ mod app {
         let manu_test_data = cx.shared.manu_test_data;
         let matrix = cx.shared.matrix;
         let sense_pins = cx.local.sense_pins;
-        let sensor_mode = cx.shared.sensor_mode;
         let tcc0 = cx.shared.tcc0;
 
-        (
-            adc,
-            hidio_intf,
-            layer_state,
-            manu_test_data,
-            matrix,
-            sensor_mode,
-            tcc0,
-        )
-            .lock(
-                |adc_pdc, hidio_intf, layer_state, manu_test_data, matrix, sensor_mode, tcc0| {
-                    let strobe =
-                        kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
-                            adc_pdc,
-                            sense_pins,
-                            *sensor_mode,
-                            tcc0,
-                            hidio_intf,
-                            layer_state,
-                            manu_test_data,
-                            matrix,
-                            SWITCH_REMAP,
-                        );
+        (adc, hidio_intf, layer_state, manu_test_data, matrix, tcc0).lock(
+            |adc_pdc, hidio_intf, layer_state, manu_test_data, matrix, tcc0| {
+                let strobe =
+                    kiibohd_atsam4s::hall_effect::adc_irq::<CSIZE, RSIZE, MSIZE, ADC_BUF_SIZE>(
+                        adc_pdc,
+                        sense_pins,
+                        tcc0,
+                        hidio_intf,
+                        layer_state,
+                        manu_test_data,
+                        matrix,
+                        SWITCH_REMAP,
+                    );
 
-                    // Process macros after full strobe cycle
-                    if strobe == 0 && macro_process::spawn().is_err() {
-                        defmt::warn!("Could not schedule macro_process");
-                    }
-                },
-            );
+                // Process macros after full strobe cycle
+                if strobe == 0 && macro_process::spawn().is_err() {
+                    defmt::warn!("Could not schedule macro_process");
+                }
+            },
+        );
     }
 
     /// SPI Interrupt

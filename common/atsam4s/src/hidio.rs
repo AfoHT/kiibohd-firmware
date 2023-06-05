@@ -12,6 +12,9 @@ use hal::chipid::ChipId;
 use heapless::{String, Vec};
 use kiibohd_hid_io::*;
 
+#[cfg(feature = "hall-effect")]
+use crate::hall_effect::{SensorMode, SILO_ATSAM4S_LC605_GAIN_2X, SILO_ATSAM4S_LC605_GAIN_4X};
+
 #[derive(defmt::Format)]
 pub struct ManufacturingConfig {
     /// Cycles LEDs thruogh all available colors to check for dead LEDs
@@ -24,6 +27,9 @@ pub struct ManufacturingConfig {
     pub hall_pass_fail_test: bool,
     /// Hall Effect level check
     pub hall_level_check: bool,
+    /// Hall Effect Mode Switch
+    #[cfg(feature = "hall-effect")]
+    pub hall_effect_mode_switch: Option<SensorMode>,
 }
 
 #[derive(defmt::Format)]
@@ -67,6 +73,8 @@ impl<const H: usize> HidioInterface<H> {
             led_open_test: false,
             hall_pass_fail_test: false,
             hall_level_check: false,
+            #[cfg(feature = "hall-effect")]
+            hall_effect_mode_switch: None,
         };
 
         // Default to all controls disabled
@@ -236,6 +244,29 @@ impl<const H: usize> KiibohdCommandInterface<H> for HidioInterface<H> {
                         self.manufacturing_config.hall_level_check = true;
                         Ok(h0050::Ack {})
                     }
+                    // Sets normal Hall Effect ADC mode
+                    #[cfg(feature = "hall-effect")]
+                    h0050::args::HallEffectSensorTest::ModeSetNormal => {
+                        self.manufacturing_config.hall_effect_mode_switch =
+                            Some(SensorMode::Normal(&SILO_ATSAM4S_LC605_GAIN_4X));
+                        Ok(h0050::Ack {})
+                    }
+                    // Sets low latency Hall Effect ADC mode
+                    #[cfg(feature = "hall-effect")]
+                    h0050::args::HallEffectSensorTest::ModeSetLowLatency => {
+                        self.manufacturing_config.hall_effect_mode_switch =
+                            Some(SensorMode::LowLatency(&SILO_ATSAM4S_LC605_GAIN_4X));
+                        Ok(h0050::Ack {})
+                    }
+                    // Sets test Hall Effect ADC mode
+                    #[cfg(feature = "hall-effect")]
+                    h0050::args::HallEffectSensorTest::ModeSetTest => {
+                        self.manufacturing_config.hall_effect_mode_switch =
+                            Some(SensorMode::Test(&SILO_ATSAM4S_LC605_GAIN_2X));
+                        Ok(h0050::Ack {})
+                    }
+                    // Unsupported commands
+                    _ => Err(h0050::Nak {}),
                 }
             }
             _ => Err(h0050::Nak {}),
