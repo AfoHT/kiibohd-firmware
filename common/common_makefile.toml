@@ -16,6 +16,10 @@ command = "dfu-suffix"
 args = ["--add", "${TOP_LEVEL}/target/${DEVICE_BIN_NAME}-release.dfu.bin", "--vid", "${BOOT_VID}", "--pid", "${BOOT_PID}"]
 dependencies = ["bin-release"]
 
+[tasks.check]
+command = "cargo"
+args = ["check", "--target", "${TARGET}"]
+
 [tasks.build]
 command = "cargo"
 args = ["build", "--target", "${TARGET}"]
